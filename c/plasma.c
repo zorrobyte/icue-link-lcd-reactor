@@ -482,22 +482,115 @@ static void fil_path(cairo_t *cr, const filament *f, int from, int to)
         cairo_line_to(cr, f->px[k], f->py[k]);
 }
 
+/* Static layers, built once: the sphere interior, and an overlay with the electrode
+ * ball, glass rim, highlight and bottom shade. Text lives in its own cached layer. */
+#define FPS_IDLE        8
+static cairo_surface_t *bg_cache, *fg_cache, *hud_cache;
+static char hud_key[256];
+
+static void build_caches(void)
+{
+    const double c = SIZE / 2.0;
+    bg_cache = cairo_image_surface_create(CAIRO_FORMAT_RGB24, SIZE, SIZE);
+    cairo_t *cr = cairo_create(bg_cache);
+    cairo_pattern_t *g = cairo_pattern_create_radial(c, c, 20, c, c, GLASS_R + 10);
+    cairo_pattern_add_color_stop_rgb(g, 0.0, 0.10, 0.04, 0.18);
+    cairo_pattern_add_color_stop_rgb(g, 0.7, 0.04, 0.02, 0.09);
+    cairo_pattern_add_color_stop_rgb(g, 1.0, 0.02, 0.01, 0.05);
+    cairo_set_source(cr, g);
+    cairo_paint(cr);
+    cairo_pattern_destroy(g);
+    cairo_destroy(cr);
+
+    fg_cache = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, SIZE, SIZE);
+    cr = cairo_create(fg_cache);
+    /* electrode ball: dark glass with a rim light */
+    g = cairo_pattern_create_radial(c - 18, c - 22, 6, c, c, ELECTRODE_R);
+    cairo_pattern_add_color_stop_rgb(g, 0, 0.30, 0.22, 0.40);
+    cairo_pattern_add_color_stop_rgb(g, 0.6, 0.08, 0.05, 0.13);
+    cairo_pattern_add_color_stop_rgb(g, 1, 0.03, 0.02, 0.06);
+    cairo_arc(cr, c, c, ELECTRODE_R, 0, 2 * M_PI);
+    cairo_set_source(cr, g);
+    cairo_fill(cr);
+    cairo_pattern_destroy(g);
+    cairo_arc(cr, c, c, ELECTRODE_R, 0, 2 * M_PI);
+    cairo_set_line_width(cr, 2);
+    cairo_set_source_rgba(cr, 0.9, 0.75, 1, 0.8);
+    cairo_stroke(cr);
+    /* glass rim and specular highlight */
+    cairo_new_path(cr);
+    cairo_arc(cr, c, c, GLASS_R + 3, 0, 2 * M_PI);
+    cairo_set_line_width(cr, 3);
+    cairo_set_source_rgba(cr, 0.75, 0.65, 1.0, 0.35);
+    cairo_stroke(cr);
+    cairo_new_path(cr);
+    cairo_arc(cr, c, c, GLASS_R - 14, M_PI * 1.08, M_PI * 1.42);
+    cairo_set_line_width(cr, 7);
+    cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+    cairo_set_source_rgba(cr, 1, 1, 1, 0.16);
+    cairo_stroke(cr);
+    /* soft shade behind the bottom stats */
+    g = cairo_pattern_create_linear(0, c + 105, 0, c + 190);
+    cairo_pattern_add_color_stop_rgba(g, 0.0, 0.02, 0.01, 0.05, 0);
+    cairo_pattern_add_color_stop_rgba(g, 0.5, 0.02, 0.01, 0.05, 0.75);
+    cairo_pattern_add_color_stop_rgba(g, 1.0, 0.02, 0.01, 0.05, 0.85);
+    cairo_rectangle(cr, 0, c + 105, SIZE, SIZE);
+    cairo_set_source(cr, g);
+    cairo_fill(cr);
+    cairo_pattern_destroy(g);
+    cairo_destroy(cr);
+
+    hud_cache = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, SIZE, SIZE);
+}
+
+/* Redraw the text layer only when something on it changes; numbers update 4x a second */
+static void update_hud(const stats *s, const shown_t *sh, double t)
+{
+    const double c = SIZE / 2.0;
+    static double tok, watts, next;
+    char key[256], txt[64];
+    int idle = s->tok_s < 0.5 && s->running == 0;
+
+    if (t >= next || t < next - 1) {
+        next = t + 0.25;
+        tok = sh->tok;
+        watts = s->power[0] + s->power[1];
+    }
+    snprintf(key, sizeof(key), "%d|%.0f|%.0f|%d|%d|%d|%d", idle, tok, watts, s->temp[0], s->temp[1],
+             s->running_port[0], s->running_port[1]);
+    if (!strcmp(key, hud_key))
+        return;
+    strcpy(hud_key, key);
+
+    cairo_t *cr = cairo_create(hud_cache);
+    cairo_set_operator(cr, CAIRO_OPERATOR_CLEAR);
+    cairo_paint(cr);
+    cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
+    if (idle) {
+        text_center(cr, c, c, 22, 1, DIM, "IDLE");
+    } else {
+        snprintf(txt, sizeof(txt), "%.0f", tok);
+        text_center(cr, c, c - 8, tok >= 1000 ? 36 : 46, 1, WHITE, txt);
+        text_center(cr, c, c + 24, 14, 1, (rgb){ 0.85, 0.7, 1.0 }, "TOK/S");
+    }
+    snprintf(txt, sizeof(txt), "%.0f W", watts);
+    text_center(cr, c, c + 138, 34, 1, WHITE, txt);
+    snprintf(txt, sizeof(txt), "%d\xC2\xB0", s->temp[0]);
+    text_center(cr, c - 72, c + 180, 26, 1, fil_color(0), txt);
+    snprintf(txt, sizeof(txt), "%d\xC2\xB0", s->temp[1]);
+    text_center(cr, c + 72, c + 180, 26, 1, fil_color(1), txt);
+    snprintf(txt, sizeof(txt), "%d/%d  %d/%d", s->running_port[0], SLOTS_PER_SERVER, s->running_port[1], SLOTS_PER_SERVER);
+    text_center(cr, c, c + 180, 16, 1, DIM, txt);
+    cairo_destroy(cr);
+}
+
 static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t, double jitter)
 {
     const double c = SIZE / 2.0;
-    double total_w = s->power[0] + s->power[1];
-    char txt[64];
 
-    /* Glass sphere interior: deep purple, a little brighter toward the middle */
-    {
-        cairo_pattern_t *g = cairo_pattern_create_radial(c, c, 20, c, c, GLASS_R + 10);
-        cairo_pattern_add_color_stop_rgb(g, 0.0, 0.10, 0.04, 0.18);
-        cairo_pattern_add_color_stop_rgb(g, 0.7, 0.04, 0.02, 0.09);
-        cairo_pattern_add_color_stop_rgb(g, 1.0, 0.02, 0.01, 0.05);
-        cairo_set_source(cr, g);
-        cairo_paint(cr);
-        cairo_pattern_destroy(g);
-    }
+    /* Glass sphere interior (cached) */
+    cairo_set_source_surface(cr, bg_cache, 0, 0);
+    cairo_paint(cr);
 
     /* Filaments: soft glow, colored body, white-hot core; flicker with the crackle */
     cairo_set_operator(cr, CAIRO_OPERATOR_ADD);
@@ -581,67 +674,18 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t, dou
         cairo_pattern_add_color_stop_rgba(g, 0, 0.85, 0.6, 1.0, a);
         cairo_pattern_add_color_stop_rgba(g, 1, 0.55, 0.3, 1.0, 0);
         cairo_set_source(cr, g);
-        cairo_paint(cr);
+        cairo_arc(cr, c, c, ELECTRODE_R * 2.1, 0, 2 * M_PI);     /* only the glow's own area */
+        cairo_fill(cr);
         cairo_pattern_destroy(g);
     }
     cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
 
-    /* Electrode ball: dark glass with a rim light */
-    {
-        cairo_pattern_t *g = cairo_pattern_create_radial(c - 18, c - 22, 6, c, c, ELECTRODE_R);
-        cairo_pattern_add_color_stop_rgb(g, 0, 0.30, 0.22, 0.40);
-        cairo_pattern_add_color_stop_rgb(g, 0.6, 0.08, 0.05, 0.13);
-        cairo_pattern_add_color_stop_rgb(g, 1, 0.03, 0.02, 0.06);
-        cairo_arc(cr, c, c, ELECTRODE_R, 0, 2 * M_PI);
-        cairo_set_source(cr, g);
-        cairo_fill(cr);
-        cairo_pattern_destroy(g);
-        cairo_arc(cr, c, c, ELECTRODE_R, 0, 2 * M_PI);
-        cairo_set_line_width(cr, 2);
-        cairo_set_source_rgba(cr, 0.9, 0.75, 1, 0.8);
-        cairo_stroke(cr);
-    }
-
-    if (s->tok_s < 0.5 && s->running == 0) {
-        text_center(cr, c, c, 22, 1, DIM, "IDLE");
-    } else {
-        snprintf(txt, sizeof(txt), "%.0f", sh->tok);
-        text_center(cr, c, c - 8, sh->tok >= 1000 ? 36 : 46, 1, WHITE, txt);
-        text_center(cr, c, c + 24, 14, 1, (rgb){ 0.85, 0.7, 1.0 }, "TOK/S");
-    }
-
-    /* Glass: rim and a specular highlight */
-    cairo_new_path(cr);
-    cairo_arc(cr, c, c, GLASS_R + 3, 0, 2 * M_PI);
-    cairo_set_line_width(cr, 3);
-    cairo_set_source_rgba(cr, 0.75, 0.65, 1.0, 0.35);
-    cairo_stroke(cr);
-    cairo_new_path(cr);
-    cairo_arc(cr, c, c, GLASS_R - 14, M_PI * 1.08, M_PI * 1.42);
-    cairo_set_line_width(cr, 7);
-    cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
-    cairo_set_source_rgba(cr, 1, 1, 1, 0.16);
-    cairo_stroke(cr);
-
-    /* Bottom stats over a soft shade */
-    {
-        cairo_pattern_t *g = cairo_pattern_create_linear(0, c + 105, 0, c + 190);
-        cairo_pattern_add_color_stop_rgba(g, 0.0, 0.02, 0.01, 0.05, 0);
-        cairo_pattern_add_color_stop_rgba(g, 0.5, 0.02, 0.01, 0.05, 0.75);
-        cairo_pattern_add_color_stop_rgba(g, 1.0, 0.02, 0.01, 0.05, 0.85);
-        cairo_rectangle(cr, 0, c + 105, SIZE, SIZE);
-        cairo_set_source(cr, g);
-        cairo_fill(cr);
-        cairo_pattern_destroy(g);
-    }
-    snprintf(txt, sizeof(txt), "%.0f W", total_w);
-    text_center(cr, c, c + 138, 34, 1, WHITE, txt);
-    snprintf(txt, sizeof(txt), "%d\xC2\xB0", s->temp[0]);
-    text_center(cr, c - 72, c + 180, 26, 1, fil_color(0), txt);
-    snprintf(txt, sizeof(txt), "%d\xC2\xB0", s->temp[1]);
-    text_center(cr, c + 72, c + 180, 26, 1, fil_color(1), txt);
-    snprintf(txt, sizeof(txt), "%d/%d  %d/%d", s->running_port[0], SLOTS_PER_SERVER, s->running_port[1], SLOTS_PER_SERVER);
-    text_center(cr, c, c + 180, 16, 1, DIM, txt);
+    /* Electrode ball, glass rim, highlight and bottom shade (cached), then the text layer */
+    cairo_set_source_surface(cr, fg_cache, 0, 0);
+    cairo_paint(cr);
+    update_hud(s, sh, t);
+    cairo_set_source_surface(cr, hud_cache, 0, 0);
+    cairo_paint(cr);
 }
 
 /* ---------------------------------------------------------------- main */
@@ -670,6 +714,7 @@ int main(int argc, char **argv)
     srand((unsigned)time(NULL));
 
     init_slots();
+    build_caches();
     surf = cairo_image_surface_create(CAIRO_FORMAT_RGB24, SIZE, SIZE);
     cr = cairo_create(surf);
     tj = tj3Init(TJINIT_COMPRESS);
@@ -757,7 +802,8 @@ int main(int argc, char **argv)
             }
         }
 
-        double spare = 1.0 / FPS - (now_s() - t);
+        int idle_now = s.tok_s < 1 && s.running == 0;
+        double spare = 1.0 / (idle_now ? FPS_IDLE : FPS) - (now_s() - t);
         if (spare > 0) {
             struct timespec ts = { 0, (long)(spare * 1e9) };
             nanosleep(&ts, NULL);

@@ -686,6 +686,72 @@ static void init_stars(void)
     }
 }
 
+/* Static bottom shade (cached overlay) and a cached text layer that is redrawn only
+ * when something on it changes; numbers update 4x a second. Idle drops to FPS_IDLE. */
+#define FPS_IDLE        8
+static cairo_surface_t *fg_cache, *hud_cache;
+static char hud_key[256];
+
+static void build_caches(void)
+{
+    const double c = SIZE / 2.0;
+    fg_cache = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, SIZE, SIZE);
+    cairo_t *cr = cairo_create(fg_cache);
+    {
+        cairo_pattern_t *g = cairo_pattern_create_linear(0, c + 105, 0, c + 190);
+        cairo_pattern_add_color_stop_rgba(g, 0.0, BG.r, BG.g, BG.b, 0);
+        cairo_pattern_add_color_stop_rgba(g, 0.45, BG.r, BG.g, BG.b, 0.82);
+        cairo_pattern_add_color_stop_rgba(g, 1.0, BG.r, BG.g, BG.b, 0.9);
+        cairo_rectangle(cr, 0, c + 105, SIZE, SIZE);
+        cairo_set_source(cr, g);
+        cairo_fill(cr);
+        cairo_pattern_destroy(g);
+    }
+    cairo_destroy(cr);
+    hud_cache = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, SIZE, SIZE);
+}
+
+static void update_hud(const stats *s, const shown_t *sh, double t, rgb core)
+{
+    const double c = SIZE / 2.0;
+    static double tok, watts, next;
+    char key[256], txt[64];
+
+    if (t >= next || t < next - 1) {
+        next = t + 0.25;
+        tok = sh->tok;
+        watts = s->power[0] + s->power[1];
+    }
+    snprintf(key, sizeof(key), "%d|%.0f|%.0f|%d|%d|%d|%.1f%.1f%.1f", s->tok_s < 0.5 && s->running == 0, tok, watts,
+             s->temp[0], s->temp[1], s->running, core.r, core.g, core.b);
+    if (!strcmp(key, hud_key))
+        return;
+    strcpy(hud_key, key);
+
+    cairo_t *cr = cairo_create(hud_cache);
+    cairo_set_operator(cr, CAIRO_OPERATOR_CLEAR);
+    cairo_paint(cr);
+    cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
+    if (s->tok_s < 0.5 && s->running == 0) {
+        text_center(cr, c, c, 24, 1, DIM, "IDLE");
+    } else {
+        snprintf(txt, sizeof(txt), "%.0f", tok);
+        text_center(cr, c, c - 9, tok >= 1000 ? 40 : 50, 1, WHITE, txt);
+        text_center(cr, c, c + 28, 15, 1, core, "TOK/S");
+    }
+    snprintf(txt, sizeof(txt), "%.0f W", watts);
+    text_center(cr, c, c + 138, 34, 1, WHITE, txt);
+    snprintf(txt, sizeof(txt), "%d\xC2\xB0", s->temp[0]);
+    text_center(cr, c - 72, c + 180, 26, 1, BLUE, txt);
+    snprintf(txt, sizeof(txt), "%d\xC2\xB0", s->temp[1]);
+    text_center(cr, c + 72, c + 180, 26, 1, ORANGE, txt);
+    if (s->running) {
+        snprintf(txt, sizeof(txt), "%d req", s->running);
+        text_center(cr, c, c + 180, 18, 1, DIM, txt);
+    }
+    cairo_destroy(cr);
+}
+
 static void render(cairo_t *trail_cr, cairo_surface_t *trail, cairo_t *cr,
                    const stats *s, const shown_t *sh, double t)
 {
@@ -693,7 +759,6 @@ static void render(cairo_t *trail_cr, cairo_surface_t *trail, cairo_t *cr,
     double total_w = s->power[0] + s->power[1];
     double heat = clamp01(total_w / POWER_MAX);
     rgb core = heat_color(heat);
-    char txt[64];
 
     /* Dust trails live on their own surface, faded each frame */
     cairo_set_operator(trail_cr, CAIRO_OPERATOR_OVER);
@@ -747,7 +812,8 @@ static void render(cairo_t *trail_cr, cairo_surface_t *trail, cairo_t *cr,
         cairo_pattern_add_color_stop_rgba(g, 1.0, core.r, core.g, core.b, 0);
         cairo_set_operator(cr, CAIRO_OPERATOR_ADD);
         cairo_set_source(cr, g);
-        cairo_paint(cr);
+        cairo_arc(cr, c, c, HORIZON_R * 2.7, 0, 2 * M_PI);     /* only the glow's own area */
+        cairo_fill(cr);
         cairo_pattern_destroy(g);
     }
 
@@ -798,13 +864,6 @@ static void render(cairo_t *trail_cr, cairo_surface_t *trail, cairo_t *cr,
     cairo_set_source_rgb(cr, 0, 0, 0);
     cairo_fill(cr);
 
-    if (s->tok_s < 0.5 && s->running == 0) {
-        text_center(cr, c, c, 24, 1, DIM, "IDLE");
-    } else {
-        snprintf(txt, sizeof(txt), "%.0f", sh->tok);
-        text_center(cr, c, c - 9, sh->tok >= 1000 ? 40 : 50, 1, WHITE, txt);
-        text_center(cr, c, c + 28, 15, 1, core, "TOK/S");
-    }
 
     /* Thin GPU load arcs at the rim */
     {
@@ -818,27 +877,12 @@ static void render(cairo_t *trail_cr, cairo_surface_t *trail, cairo_t *cr,
             arc(cr, ring_r, ring_w, 275, 275 + 170 * sh->tuf, ORANGE);
     }
 
-    {
-        cairo_pattern_t *g = cairo_pattern_create_linear(0, c + 105, 0, c + 190);
-        cairo_pattern_add_color_stop_rgba(g, 0.0, BG.r, BG.g, BG.b, 0);
-        cairo_pattern_add_color_stop_rgba(g, 0.45, BG.r, BG.g, BG.b, 0.82);
-        cairo_pattern_add_color_stop_rgba(g, 1.0, BG.r, BG.g, BG.b, 0.9);
-        cairo_rectangle(cr, 0, c + 105, SIZE, SIZE);
-        cairo_set_source(cr, g);
-        cairo_fill(cr);
-        cairo_pattern_destroy(g);
-    }
+    cairo_set_source_surface(cr, fg_cache, 0, 0);
+    cairo_paint(cr);
 
-    snprintf(txt, sizeof(txt), "%.0f W", total_w);
-    text_center(cr, c, c + 138, 34, 1, WHITE, txt);
-    snprintf(txt, sizeof(txt), "%d\xC2\xB0", s->temp[0]);
-    text_center(cr, c - 72, c + 180, 26, 1, BLUE, txt);
-    snprintf(txt, sizeof(txt), "%d\xC2\xB0", s->temp[1]);
-    text_center(cr, c + 72, c + 180, 26, 1, ORANGE, txt);
-    if (s->running) {
-        snprintf(txt, sizeof(txt), "%d req", s->running);
-        text_center(cr, c, c + 180, 18, 1, DIM, txt);
-    }
+    update_hud(s, sh, t, core);
+    cairo_set_source_surface(cr, hud_cache, 0, 0);
+    cairo_paint(cr);
 }
 
 /* ---------------------------------------------------------------- main */
@@ -875,6 +919,7 @@ int main(int argc, char **argv)
     srand((unsigned)time(NULL));
     init_stars();
 
+    build_caches();
     surf = cairo_image_surface_create(CAIRO_FORMAT_RGB24, SIZE, SIZE);
     cr = cairo_create(surf);
     trail = cairo_image_surface_create(CAIRO_FORMAT_RGB24, SIZE, SIZE);
@@ -982,7 +1027,8 @@ int main(int argc, char **argv)
             }
         }
 
-        double spare = 1.0 / FPS - (now_s() - t);
+        int idle_now = s.tok_s < 1 && s.running == 0;
+        double spare = 1.0 / (idle_now ? FPS_IDLE : FPS) - (now_s() - t);
         if (spare > 0) {
             struct timespec ts = { 0, (long)(spare * 1e9) };
             nanosleep(&ts, NULL);

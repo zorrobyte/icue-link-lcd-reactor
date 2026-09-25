@@ -376,7 +376,13 @@ static double wheel_angle, stride_phase, grid_phase, fx_acc[4];
 static double star_x[N_STARS], star_y[N_STARS], star_p[N_STARS];
 static double shades_t = -1;            /* time the shades started dropping, -1 = off */
 static double activity;                 /* 0 idle .. 1 flat out, eased */
-static cairo_surface_t *scanlines;
+static cairo_surface_t *scanlines;        /* scanlines + round vignette, built once */
+static cairo_surface_t *scene_cache;      /* sky, sun, mountains, floor, stand: rebuilt when the sun moves */
+static cairo_surface_t *rim_cache;        /* the wheel's static rings and hub */
+static cairo_surface_t *hud_cache;        /* all text; redrawn only when it changes */
+static int scene_key = -1;
+static char hud_key[512];
+#define FPS_IDLE        8
 
 static double frand(void) { return rand() / (double)RAND_MAX; }
 
@@ -408,7 +414,16 @@ static void init_scene(void)
         cairo_rectangle(sc, 0, y, SIZE, 1);
     }
     cairo_fill(sc);
+    cairo_pattern_t *v = cairo_pattern_create_radial(SIZE / 2.0, SIZE / 2.0, 205, SIZE / 2.0, SIZE / 2.0, 252);
+    cairo_pattern_add_color_stop_rgba(v, 0, 0, 0, 0, 0);
+    cairo_pattern_add_color_stop_rgba(v, 1, 0, 0, 0, 0.75);
+    cairo_set_source(sc, v);
+    cairo_paint(sc);
+    cairo_pattern_destroy(v);
     cairo_destroy(sc);
+
+    scene_cache = cairo_image_surface_create(CAIRO_FORMAT_RGB24, SIZE, SIZE);
+    hud_cache = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, SIZE, SIZE);
 }
 
 /* Pixel colour for the llama at (row, col), after costume overlays */
@@ -620,10 +635,18 @@ static void draw_sky(cairo_t *cr, double t)
     cairo_set_source(cr, g);
     cairo_fill(cr);
     cairo_pattern_destroy(g);
+    (void)t;
+}
 
+/* Twinkling stars, drawn per frame over the cached sky, skipping the sun */
+static void draw_stars(cairo_t *cr, double t)
+{
+    double sun_y = HORIZON_Y - 60 + (1 - activity) * 120;
     for (int i = 0; i < N_STARS; i++) {
+        if (hypot(star_x[i] - WHEEL_CX, star_y[i] - sun_y) < 110)
+            continue;
         double tw = 0.5 + 0.5 * sin(t * 1.7 + star_p[i]);
-        double fade = clamp01(1.1 - star_y[i] / HORIZON_Y) * (1 - 0.6 * a);
+        double fade = clamp01(1.1 - star_y[i] / HORIZON_Y) * (1 - 0.6 * activity);
         cairo_set_source_rgba(cr, 1, 0.92, 1, (0.25 + 0.75 * tw) * fade);
         cairo_rectangle(cr, star_x[i], star_y[i], 2, 2);
         cairo_fill(cr);
@@ -641,7 +664,7 @@ static void draw_sun(cairo_t *cr, double t)
     cairo_pattern_t *h = cairo_pattern_create_radial(cx, cy, r * 0.8, cx, cy, r * 2.0);
     cairo_pattern_add_color_stop_rgba(h, 0, SUN_BOT.r, SUN_BOT.g, SUN_BOT.b, 0.35 * (0.3 + 0.7 * activity));
     cairo_pattern_add_color_stop_rgba(h, 1, SUN_BOT.r, SUN_BOT.g, SUN_BOT.b, 0);
-    cairo_rectangle(cr, 0, 0, SIZE, HORIZON_Y);
+    cairo_rectangle(cr, cx - r * 2, fmax(0, cy - r * 2), r * 4, fmin(HORIZON_Y, cy + r * 2) - fmax(0, cy - r * 2));
     cairo_set_source(cr, h);
     cairo_fill(cr);
     cairo_pattern_destroy(h);
@@ -653,7 +676,7 @@ static void draw_sun(cairo_t *cr, double t)
     cairo_new_path(cr);
     cairo_arc(cr, cx, cy, r, 0, 2 * M_PI);
     cairo_set_fill_rule(cr, CAIRO_FILL_RULE_EVEN_ODD);
-    double drift = fmod(t * 6, 16);
+    double drift = floor(fmod(t * 6, 16));
     for (int i = 0; i < 8; i++) {
         double y = cy + 4 + i * 16 + drift;
         double hgt = 1.5 + i * 1.3;
@@ -710,12 +733,6 @@ static void draw_floor(cairo_t *cr)
         cairo_move_to(cr, vx + i * 10, vy);
         cairo_line_to(cr, vx + i * 70, SIZE + 40);
     }
-    for (int i = 0; i < 14; i++) {
-        double z = (i + grid_phase) / 14.0;          /* 0 far .. 1 near */
-        double y = vy + pow(z, 2.4) * (SIZE - vy + 20);
-        cairo_move_to(cr, 0, y);
-        cairo_line_to(cr, SIZE, y);
-    }
     cairo_set_line_width(cr, 5);
     cairo_set_source_rgba(cr, NEON_PINK.r, NEON_PINK.g, NEON_PINK.b, 0.12);
     cairo_stroke_preserve(cr);
@@ -727,6 +744,24 @@ static void draw_floor(cairo_t *cr)
     cairo_rectangle(cr, 0, HORIZON_Y - 1, SIZE, 2);
     cairo_set_source_rgba(cr, 1, 0.6, 0.85, 0.9);
     cairo_fill(cr);
+}
+
+/* The grid's cross lines, scrolling toward the viewer (per frame) */
+static void draw_grid_scroll(cairo_t *cr)
+{
+    cairo_new_path(cr);
+    for (int i = 0; i < 14; i++) {
+        double z = (i + grid_phase) / 14.0;          /* 0 far .. 1 near */
+        double y = HORIZON_Y + pow(z, 2.4) * (SIZE - HORIZON_Y + 20);
+        cairo_move_to(cr, 0, y);
+        cairo_line_to(cr, SIZE, y);
+    }
+    cairo_set_line_width(cr, 5);
+    cairo_set_source_rgba(cr, NEON_PINK.r, NEON_PINK.g, NEON_PINK.b, 0.12);
+    cairo_stroke_preserve(cr);
+    cairo_set_line_width(cr, 1.4);
+    cairo_set_source_rgba(cr, NEON_PINK.r, NEON_PINK.g, NEON_PINK.b, 0.85);
+    cairo_stroke(cr);
 }
 
 static void draw_flames(cairo_t *cr, double t, double intensity)
@@ -799,18 +834,10 @@ static void draw_wheel(cairo_t *cr, double speed)
         neon_stroke(cr, NEON_CYAN, 2.0, gh ? 0.25 : 0.7);
     }
 
-    /* Rim */
-    cairo_new_path(cr);
-    cairo_arc(cr, WHEEL_CX, WHEEL_CY, WHEEL_R - WHEEL_RIM / 2, 0, 2 * M_PI);
-    cairo_set_line_width(cr, WHEEL_RIM + 6);
-    cairo_set_source_rgb(cr, 0.10, 0.03, 0.20);
-    cairo_stroke(cr);
-    cairo_new_path(cr);
-    cairo_arc(cr, WHEEL_CX, WHEEL_CY, WHEEL_R - 1, 0, 2 * M_PI);
-    neon_stroke(cr, NEON_CYAN, 2.5, 1);
-    cairo_new_path(cr);
-    cairo_arc(cr, WHEEL_CX, WHEEL_CY, WHEEL_R - WHEEL_RIM, 0, 2 * M_PI);
-    neon_stroke(cr, NEON_PINK, 2.0, 0.9);
+    /* Static rings and hub, cached */
+    cairo_set_source_surface(cr, rim_cache, 0, 0);
+    cairo_paint(cr);
+
     /* Rungs */
     cairo_new_path(cr);
     for (int i = 0; i < 40; i++) {
@@ -822,13 +849,50 @@ static void draw_wheel(cairo_t *cr, double speed)
     cairo_set_line_width(cr, 1.5);
     cairo_set_source_rgba(cr, NEON_CYAN.r, NEON_CYAN.g, NEON_CYAN.b, 0.7);
     cairo_stroke(cr);
+}
 
-    /* Hub */
+static void build_rim_cache(void)
+{
+    rim_cache = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, SIZE, SIZE);
+    cairo_t *cr = cairo_create(rim_cache);
+    cairo_new_path(cr);
+    cairo_arc(cr, WHEEL_CX, WHEEL_CY, WHEEL_R - WHEEL_RIM / 2, 0, 2 * M_PI);
+    cairo_set_line_width(cr, WHEEL_RIM + 6);
+    cairo_set_source_rgb(cr, 0.10, 0.03, 0.20);
+    cairo_stroke(cr);
+    cairo_new_path(cr);
+    cairo_arc(cr, WHEEL_CX, WHEEL_CY, WHEEL_R - 1, 0, 2 * M_PI);
+    neon_stroke(cr, NEON_CYAN, 2.5, 1);
+    cairo_new_path(cr);
+    cairo_arc(cr, WHEEL_CX, WHEEL_CY, WHEEL_R - WHEEL_RIM, 0, 2 * M_PI);
+    neon_stroke(cr, NEON_PINK, 2.0, 0.9);
     cairo_new_path(cr);
     cairo_arc(cr, WHEEL_CX, WHEEL_CY, 8, 0, 2 * M_PI);
     cairo_set_source_rgb(cr, 0.10, 0.03, 0.20);
     cairo_fill_preserve(cr);
     neon_stroke(cr, NEON_CYAN, 2, 1);
+    cairo_destroy(cr);
+}
+
+/* Sky, sun, mountains, floor, stand and the wheel's dim interior only change with the
+ * sun's position (activity) and its stripe drift, so they're cached and rebuilt on change */
+static void update_scene_cache(double t)
+{
+    int key = (int)(activity * 60) * 16 + (int)fmod(t * 6, 16);
+    if (key == scene_key)
+        return;
+    scene_key = key;
+    cairo_t *cr = cairo_create(scene_cache);
+    draw_sky(cr, t);
+    draw_sun(cr, t);
+    draw_mountains(cr);
+    draw_floor(cr);
+    draw_wheel_stand(cr);
+    cairo_new_path(cr);
+    cairo_arc(cr, WHEEL_CX, WHEEL_CY, WHEEL_R - WHEEL_RIM, 0, 2 * M_PI);
+    cairo_set_source_rgba(cr, 0.05, 0.0, 0.10, 0.28);
+    cairo_fill(cr);
+    cairo_destroy(cr);
 }
 
 typedef struct { double zotac, tuf, tok; } shown_t;
@@ -845,21 +909,14 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t)
     double llama_x = WHEEL_CX - SPR_W * PX / 2.0 + 6;
     double llama_y = WHEEL_CY + WHEEL_R - WHEEL_RIM - 23 * PX;
     int stride = !asleep && ((int)(stride_phase * 2) & 1);
-    char txt[96];
 
-    draw_sky(cr, t);
-    draw_sun(cr, t);
-    draw_mountains(cr);
-    draw_floor(cr);
+    update_scene_cache(t);
+    cairo_set_source_surface(cr, scene_cache, 0, 0);
+    cairo_paint(cr);
+    draw_stars(cr, t);
+    draw_grid_scroll(cr);
     if (tok >= HOT_TOK && !asleep)
         draw_flames(cr, t, clamp01((tok - HOT_TOK) / 800) * 0.7 + 0.3);
-    draw_wheel_stand(cr);
-
-    /* Dim the scene inside the wheel slightly so the runner pops */
-    cairo_new_path(cr);
-    cairo_arc(cr, WHEEL_CX, WHEEL_CY, WHEEL_R - WHEEL_RIM, 0, 2 * M_PI);
-    cairo_set_source_rgba(cr, 0.05, 0.0, 0.10, 0.28);
-    cairo_fill(cr);
 
     draw_wheel(cr, speed);
 
@@ -910,13 +967,28 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t)
         }
     }
 
-    /* Tokens/sec over the sun */
+    /* All text goes into a cached layer that is only redrawn when some of it changes.
+     * Numbers update 4 times a second so the layer isn't rebuilt every frame. */
+    static double hud_tok, hud_w, hud_p0, hud_p1, hud_next;
+    if (t >= hud_next || t < hud_next - 1) {
+        hud_next = t + 0.25;
+        hud_tok = tok;
+        hud_w = total_w;
+        hud_p0 = s->tok_port[0];
+        hud_p1 = s->tok_port[1];
+    }
+
+    typedef struct { double x, y, size, max_w; rgb fill, glow; char str[32]; } hud_item;
+    hud_item items[8];
+    int n = 0;
+#define HUD(X, Y, SZ, MW, F, G, ...) do { items[n] = (hud_item){ X, Y, SZ, MW, F, G, "" }; \
+        snprintf(items[n].str, sizeof(items[n].str), __VA_ARGS__); n++; } while (0)
+
     if (asleep) {
-        neon_text(cr, c, 176, 38, 220, (rgb){ 0.6, 0.6, 0.75 }, NEON_CYAN, "0 TOK/S");
+        HUD(c, 176, 38, 220, ((rgb){ 0.6, 0.6, 0.75 }), NEON_CYAN, "0 TOK/S");
     } else {
-        snprintf(txt, sizeof(txt), "%.0f", tok);
-        neon_text(cr, c, 176, 76, 240, WHITE, NEON_PINK, txt);
-        neon_text(cr, c, 224, 22, 120, NEON_CYAN, NEON_CYAN, "TOK/S");
+        HUD(c, 176, 76, 240, WHITE, NEON_PINK, "%.0f", hud_tok);
+        HUD(c, 224, 22, 120, NEON_CYAN, NEON_CYAN, "TOK/S");
     }
 
     /* Caption: long ones go on two lines so they stay big on a round screen */
@@ -947,32 +1019,41 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t)
             l1 = "GPU GO"; l2 = brr;
         }
         if (l2) {
-            neon_text(cr, c, 60, 40, 300, fill, glow, l1);
-            neon_text(cr, c, 104, 46, 330, fill, glow, l2);
+            HUD(c, 60, 40, 300, fill, glow, "%s", l1);
+            HUD(c, 104, 46, 330, fill, glow, "%s", l2);
         } else {
-            neon_text(cr, c, 82, 50, 330, fill, glow, l1);
+            HUD(c, 82, 50, 330, fill, glow, "%s", l1);
         }
     }
 
     /* Bottom: each server's tok/s either side of total watts */
-    snprintf(txt, sizeof(txt), "%.0fW", total_w);
-    neon_text(cr, c, 428, 30, 110, WHITE, NEON_PINK, txt);
-    snprintf(txt, sizeof(txt), "%.0f", s->tok_port[0]);
-    neon_text(cr, c - 96, 400, 30, 90, BLUE, BLUE, txt);
-    snprintf(txt, sizeof(txt), "%.0f", s->tok_port[1]);
-    neon_text(cr, c + 96, 400, 30, 90, ORANGE, ORANGE, txt);
+    HUD(c, 428, 30, 110, WHITE, NEON_PINK, "%.0fW", hud_w);
+    HUD(c - 96, 400, 30, 90, BLUE, BLUE, "%.0f", hud_p0);
+    HUD(c + 96, 400, 30, 90, ORANGE, ORANGE, "%.0f", hud_p1);
+#undef HUD
 
-    /* CRT scanlines and a round vignette */
+    char key[512] = "";
+    for (int i = 0; i < n; i++) {
+        char part[64];
+        snprintf(part, sizeof(part), "%s|%.2f%.2f%.2f;", items[i].str, items[i].fill.r, items[i].fill.g, items[i].glow.g);
+        strncat(key, part, sizeof(key) - strlen(key) - 1);
+    }
+    if (strcmp(key, hud_key)) {
+        strcpy(hud_key, key);
+        cairo_t *hc = cairo_create(hud_cache);
+        cairo_set_operator(hc, CAIRO_OPERATOR_CLEAR);
+        cairo_paint(hc);
+        cairo_set_operator(hc, CAIRO_OPERATOR_OVER);
+        for (int i = 0; i < n; i++)
+            neon_text(hc, items[i].x, items[i].y, items[i].size, items[i].max_w, items[i].fill, items[i].glow, items[i].str);
+        cairo_destroy(hc);
+    }
+    cairo_set_source_surface(cr, hud_cache, 0, 0);
+    cairo_paint(cr);
+
+    /* CRT scanlines and the round vignette, one cached overlay */
     cairo_set_source_surface(cr, scanlines, 0, 0);
     cairo_paint(cr);
-    {
-        cairo_pattern_t *v = cairo_pattern_create_radial(c, c, 205, c, c, 252);
-        cairo_pattern_add_color_stop_rgba(v, 0, 0, 0, 0, 0);
-        cairo_pattern_add_color_stop_rgba(v, 1, 0, 0, 0, 0.75);
-        cairo_set_source(cr, v);
-        cairo_paint(cr);
-        cairo_pattern_destroy(v);
-    }
 }
 
 /* ---------------------------------------------------------------- showcase */
@@ -1056,6 +1137,7 @@ int main(int argc, char **argv)
     signal(SIGPIPE, SIG_IGN);
     srand((unsigned)time(NULL));
     init_scene();
+    build_rim_cache();
 
     surf = cairo_image_surface_create(CAIRO_FORMAT_RGB24, SIZE, SIZE);
     cr = cairo_create(surf);
@@ -1154,7 +1236,8 @@ int main(int argc, char **argv)
             }
         }
 
-        double spare = 1.0 / fps - (now_s() - t);
+        int idle_now = !showcase && s.tok_s < 1 && s.running == 0 && activity < 0.02;
+        double spare = 1.0 / (idle_now ? FPS_IDLE : fps) - (now_s() - t);
         if (spare > 0) {
             struct timespec ts = { 0, (long)(spare * 1e9) };
             nanosleep(&ts, NULL);

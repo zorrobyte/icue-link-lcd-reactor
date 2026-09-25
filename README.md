@@ -284,21 +284,30 @@ ffmpeg -framerate 24 -i /tmp/frames/frame_%05d.jpg \
 
 ## Performance
 
-Render + JPEG encode per frame on a Ryzen 9 9950X3D, from `--bench`:
+Render + JPEG encode per frame under heavy load on a Ryzen 9 9950X3D, from `--bench`:
 
-| Display | Per frame | FPS | CPU |
-|---|---|---|---|
-| `reactor` | ~1.7 ms | 12 | ~2% of a core |
-| `singularity` | ~2.4 ms | 24 | ~6% (estimated) |
-| `synapse` | ~3.6 ms | 20 | ~16% |
-| `horizon` | ~4.7 ms | 20 | ~10% |
-| `brrr` | ~8.5 ms | 20 (30 in showcase) | ~17% (estimated) |
-| `plasma` | ~3 to 6 ms | 24 | ~10% (estimated) |
-| `fishbowl` | ~2 to 5.5 ms | 24 | ~10% (estimated) |
-| `autumn` | ~0.4 to 2.5 ms | 20 (6 idle) | ~4% under load, measured |
-| `reactor` (Python prototype) | ~12 ms | 12 | ~15% |
+| Display | Per frame | FPS busy / idle |
+|---|---|---|
+| `autumn` | ~2.5 ms | 20 / 6 |
+| `reactor` | ~1.7 ms | 12 / 6 |
+| `fishbowl` | ~2.1 ms | 24 / 12 |
+| `singularity` | ~2.1 ms | 24 / 8 |
+| `brrr` | ~2.3 ms | 20 / 8 (30 in showcase) |
+| `plasma` | ~3.2 ms | 24 / 8 |
+| `synapse` | ~3.7 ms | 20 / 8 |
+| `horizon` | ~4.4 ms | 20 / 8 |
 
-Most of the cost is cairo drawing; JPEG encoding with libjpeg-turbo is well under a millisecond. `autumn` shows the cheap way to build a display: draw everything static once into cached surfaces, only draw what moves each frame, and drop the frame rate when idle.
+At 20 fps, 2.5 ms per frame is about 5% of one core; `autumn` measured 4.3% live with both servers busy.
+
+How they stay cheap:
+
+- **Cached layers.** Anything that doesn't move (sky, hills, glass, rims, shading) is drawn once into a cached surface, or re-drawn only when it actually changes (`brrr`'s sky is rebuilt when the sun moves). Each frame blits the caches and draws only what moves.
+- **Cached text.** All text is drawn into its own layer that is only redrawn when a value changes, and numbers update 4 times a second instead of every frame. Outlined and glowing text was the single biggest cost in `brrr`.
+- **Slow effects at a slower rate.** `fishbowl`'s light rays, caustics and seaweed are refreshed 8 times a second into their own layer.
+- **Glows drawn only where they are.** Radial glows fill their own circle instead of painting the whole frame.
+- **Idle frame rate.** When nothing is generating, displays drop to 6 to 12 fps.
+
+Most of what's left is the animation itself: particles, trails, signals and falling words that change every frame. JPEG encoding with libjpeg-turbo is well under a millisecond.
 
 ## How the screen works
 

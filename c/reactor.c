@@ -32,6 +32,7 @@
 
 #define SIZE            480
 #define FPS             12
+#define FPS_IDLE        6           /* frame rate when nothing is generating */
 #define REPORT_SIZE     1024
 #define HEADER_SIZE     8
 #define CHUNK_SIZE      (REPORT_SIZE - HEADER_SIZE)
@@ -351,7 +352,8 @@ static void render(cairo_t *cr, const stats *s, double phase, const shown_t *sh)
         cairo_pattern_add_color_stop_rgba(g, 0.45, core.r, core.g, core.b, a * 0.6);
         cairo_pattern_add_color_stop_rgba(g, 1.0, core.r, core.g, core.b, 0);
         cairo_set_source(cr, g);
-        cairo_paint(cr);
+        cairo_arc(cr, c, c, r, 0, 2 * M_PI);     /* only the glow's own area */
+        cairo_fill(cr);
         cairo_pattern_destroy(g);
     }
 
@@ -489,7 +491,8 @@ int main(int argc, char **argv)
             }
         }
 
-        double spare = 1.0 / FPS - (now_s() - t);
+        int idle_now = s.tok_s < 1 && s.running == 0;
+        double spare = 1.0 / (idle_now ? FPS_IDLE : FPS) - (now_s() - t);
         if (spare > 0) {
             struct timespec ts = { 0, (long)(spare * 1e9) };
             nanosleep(&ts, NULL);

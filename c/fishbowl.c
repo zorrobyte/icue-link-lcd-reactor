@@ -682,13 +682,17 @@ static void draw_snail(cairo_t *cr, double x, double t)
     cairo_restore(cr);
 }
 
-static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t)
+/* Static parts (water, sand, pebbles, bubbler; glass rim) are cached, and the text is a
+ * cached layer redrawn only when it changes. Idle drops the frame rate. */
+#define FPS_IDLE        12
+static cairo_surface_t *bg_cache, *fg_cache, *hud_cache;
+static char hud_key[256];
+
+static void build_caches(void)
 {
     const double c = SIZE / 2.0;
-    double total_w = s->power[0] + s->power[1];
-    int idle = s->tok_s < 1 && s->running == 0;
-    char txt[64];
-
+    bg_cache = cairo_image_surface_create(CAIRO_FORMAT_RGB24, SIZE, SIZE);
+    cairo_t *cr = cairo_create(bg_cache);
     /* Water */
     {
         cairo_pattern_t *g = cairo_pattern_create_linear(0, SURFACE_Y, 0, SAND_Y);
@@ -702,7 +706,113 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t)
         cairo_set_source_rgb(cr, 0.03, 0.06, 0.10);
         cairo_fill(cr);
     }
+    /* Sand and pebbles */
+    {
+        cairo_new_path(cr);
+        cairo_move_to(cr, 0, SAND_Y + 10);
+        for (double x = 0; x <= SIZE; x += 16)
+            cairo_line_to(cr, x, SAND_Y + 6 * sin(x * 0.03 + 1) + 4);
+        cairo_line_to(cr, SIZE, SIZE);
+        cairo_line_to(cr, 0, SIZE);
+        cairo_close_path(cr);
+        cairo_pattern_t *g = cairo_pattern_create_linear(0, SAND_Y, 0, SIZE);
+        cairo_pattern_add_color_stop_rgb(g, 0, 0.78, 0.66, 0.45);
+        cairo_pattern_add_color_stop_rgb(g, 1, 0.40, 0.31, 0.20);
+        cairo_set_source(cr, g);
+        cairo_fill(cr);
+        cairo_pattern_destroy(g);
+        for (int i = 0; i < N_PEBBLES; i++) {
+            rgb pc = lerp((rgb){ 0.45, 0.42, 0.40 }, (rgb){ 0.75, 0.60, 0.50 }, peb_c[i]);
+            cairo_save(cr);
+            cairo_translate(cr, peb_x[i], peb_y[i]);
+            cairo_scale(cr, 1.4, 1);
+            cairo_arc(cr, 0, 0, peb_r[i], 0, 2 * M_PI);
+            cairo_restore(cr);
+            set_rgb(cr, pc);
+            cairo_fill(cr);
+        }
+    }
+    /* Bubbler stone */
+    cairo_save(cr);
+    cairo_translate(cr, c + 118, SAND_Y + 8);
+    cairo_scale(cr, 1.8, 1);
+    cairo_arc(cr, 0, 0, 8, 0, 2 * M_PI);
+    cairo_restore(cr);
+    cairo_set_source_rgb(cr, 0.35, 0.36, 0.40);
+    cairo_fill(cr);
 
+    cairo_destroy(cr);
+
+    fg_cache = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, SIZE, SIZE);
+    cr = cairo_create(fg_cache);
+    /* Glass bowl rim and reflection */
+    cairo_new_path(cr);
+    cairo_arc(cr, c, c, SIZE / 2.0 - 3, 0, 2 * M_PI);
+    cairo_set_line_width(cr, 5);
+    cairo_set_source_rgba(cr, 0.8, 0.95, 1.0, 0.25);
+    cairo_stroke(cr);
+    cairo_new_path(cr);
+    cairo_arc(cr, c, c, SIZE / 2.0 - 22, M_PI * 1.12, M_PI * 1.38);
+    cairo_set_line_width(cr, 9);
+    cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+    cairo_set_source_rgba(cr, 1, 1, 1, 0.14);
+    cairo_stroke(cr);
+    cairo_destroy(cr);
+    hud_cache = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, SIZE, SIZE);
+}
+
+static void update_hud(const stats *s, const shown_t *sh, double t)
+{
+    const double c = SIZE / 2.0;
+    static double tok, watts, next;
+    char key[128], txt[64];
+    int idle = s->tok_s < 1 && s->running == 0;
+
+    if (t >= next || t < next - 1) {
+        next = t + 0.25;
+        tok = sh->tok;
+        watts = s->power[0] + s->power[1];
+    }
+    snprintf(key, sizeof(key), "%d|%.0f|%.0f|%d|%d", idle, tok, watts, s->temp[0], s->temp[1]);
+    if (!strcmp(key, hud_key))
+        return;
+    strcpy(hud_key, key);
+
+    cairo_t *cr = cairo_create(hud_cache);
+    cairo_set_operator(cr, CAIRO_OPERATOR_CLEAR);
+    cairo_paint(cr);
+    cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
+    /* Tokens/sec in the air above the water, stats on the sand */
+    if (idle) {
+        text_center(cr, c, 36, 22, 1, (rgb){ 0.6, 0.75, 0.85 }, 1, "IDLE");
+    } else {
+        snprintf(txt, sizeof(txt), "%.0f tok/s", tok);
+        text_center(cr, c, 36, 28, 1, WHITE, 1, txt);
+    }
+    snprintf(txt, sizeof(txt), "%.0f W", watts);
+    text_center(cr, c, SAND_Y + 40, 28, 1, WHITE, 1, txt);
+    snprintf(txt, sizeof(txt), "%d\xC2\xB0", s->temp[0]);
+    text_center(cr, c - 44, SAND_Y + 74, 22, 1, GPU_BLUE, 1, txt);
+    snprintf(txt, sizeof(txt), "%d\xC2\xB0", s->temp[1]);
+    text_center(cr, c + 44, SAND_Y + 74, 22, 1, GPU_ORANGE, 1, txt);
+
+    cairo_destroy(cr);
+}
+
+static cairo_surface_t *fx_cache;
+
+static void update_water_fx(double t)
+{
+    static double next = -1;
+    if (fx_cache && t < next && t > next - 1)
+        return;
+    next = t + 0.125;
+    if (!fx_cache)
+        fx_cache = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, SIZE, SIZE);
+    cairo_t *cr = cairo_create(fx_cache);
+    cairo_set_operator(cr, CAIRO_OPERATOR_CLEAR);
+    cairo_paint(cr);
+    cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
     /* Light rays swaying down from the surface */
     cairo_set_operator(cr, CAIRO_OPERATOR_ADD);
     for (int i = 0; i < 5; i++) {
@@ -754,41 +864,21 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t)
         cairo_stroke(cr);
     }
 
-    /* Sand and pebbles */
-    {
-        cairo_new_path(cr);
-        cairo_move_to(cr, 0, SAND_Y + 10);
-        for (double x = 0; x <= SIZE; x += 16)
-            cairo_line_to(cr, x, SAND_Y + 6 * sin(x * 0.03 + 1) + 4);
-        cairo_line_to(cr, SIZE, SIZE);
-        cairo_line_to(cr, 0, SIZE);
-        cairo_close_path(cr);
-        cairo_pattern_t *g = cairo_pattern_create_linear(0, SAND_Y, 0, SIZE);
-        cairo_pattern_add_color_stop_rgb(g, 0, 0.78, 0.66, 0.45);
-        cairo_pattern_add_color_stop_rgb(g, 1, 0.40, 0.31, 0.20);
-        cairo_set_source(cr, g);
-        cairo_fill(cr);
-        cairo_pattern_destroy(g);
-        for (int i = 0; i < N_PEBBLES; i++) {
-            rgb pc = lerp((rgb){ 0.45, 0.42, 0.40 }, (rgb){ 0.75, 0.60, 0.50 }, peb_c[i]);
-            cairo_save(cr);
-            cairo_translate(cr, peb_x[i], peb_y[i]);
-            cairo_scale(cr, 1.4, 1);
-            cairo_arc(cr, 0, 0, peb_r[i], 0, 2 * M_PI);
-            cairo_restore(cr);
-            set_rgb(cr, pc);
-            cairo_fill(cr);
-        }
-    }
 
-    /* Bubbler stone */
-    cairo_save(cr);
-    cairo_translate(cr, c + 118, SAND_Y + 8);
-    cairo_scale(cr, 1.8, 1);
-    cairo_arc(cr, 0, 0, 8, 0, 2 * M_PI);
-    cairo_restore(cr);
-    cairo_set_source_rgb(cr, 0.35, 0.36, 0.40);
-    cairo_fill(cr);
+    cairo_destroy(cr);
+}
+
+static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t)
+{
+
+    /* Water, sand, pebbles and bubbler (cached) */
+    cairo_set_source_surface(cr, bg_cache, 0, 0);
+    cairo_paint(cr);
+
+    /* Light rays, caustics and seaweed move slowly: refreshed 8x a second into their own layer */
+    update_water_fx(t);
+    cairo_set_source_surface(cr, fx_cache, 0, 0);
+    cairo_paint(cr);
 
     draw_snail(cr, snail_x, t);
 
@@ -840,32 +930,12 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t)
     cairo_set_source_rgba(cr, 0.75, 0.95, 1.0, 0.8);
     cairo_stroke(cr);
 
-    /* Tokens/sec in the air above the water, stats on the sand */
-    if (idle) {
-        text_center(cr, c, 36, 22, 1, (rgb){ 0.6, 0.75, 0.85 }, 1, "IDLE");
-    } else {
-        snprintf(txt, sizeof(txt), "%.0f tok/s", sh->tok);
-        text_center(cr, c, 36, 28, 1, WHITE, 1, txt);
-    }
-    snprintf(txt, sizeof(txt), "%.0f W", total_w);
-    text_center(cr, c, SAND_Y + 40, 28, 1, WHITE, 1, txt);
-    snprintf(txt, sizeof(txt), "%d\xC2\xB0", s->temp[0]);
-    text_center(cr, c - 44, SAND_Y + 74, 22, 1, GPU_BLUE, 1, txt);
-    snprintf(txt, sizeof(txt), "%d\xC2\xB0", s->temp[1]);
-    text_center(cr, c + 44, SAND_Y + 74, 22, 1, GPU_ORANGE, 1, txt);
-
-    /* Glass bowl rim and reflection */
-    cairo_new_path(cr);
-    cairo_arc(cr, c, c, SIZE / 2.0 - 3, 0, 2 * M_PI);
-    cairo_set_line_width(cr, 5);
-    cairo_set_source_rgba(cr, 0.8, 0.95, 1.0, 0.25);
-    cairo_stroke(cr);
-    cairo_new_path(cr);
-    cairo_arc(cr, c, c, SIZE / 2.0 - 22, M_PI * 1.12, M_PI * 1.38);
-    cairo_set_line_width(cr, 9);
-    cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
-    cairo_set_source_rgba(cr, 1, 1, 1, 0.14);
-    cairo_stroke(cr);
+    /* Glass rim and reflection (cached), then the text layer */
+    cairo_set_source_surface(cr, fg_cache, 0, 0);
+    cairo_paint(cr);
+    update_hud(s, sh, t);
+    cairo_set_source_surface(cr, hud_cache, 0, 0);
+    cairo_paint(cr);
 }
 
 /* ---------------------------------------------------------------- main */
@@ -893,6 +963,7 @@ int main(int argc, char **argv)
     signal(SIGPIPE, SIG_IGN);
     srand((unsigned)time(NULL));
     init_bowl();
+    build_caches();
 
     surf = cairo_image_surface_create(CAIRO_FORMAT_RGB24, SIZE, SIZE);
     cr = cairo_create(surf);
@@ -981,7 +1052,8 @@ int main(int argc, char **argv)
             }
         }
 
-        double spare = 1.0 / FPS - (now_s() - t);
+        int idle_now = s.tok_s < 1 && s.running == 0;
+        double spare = 1.0 / (idle_now ? FPS_IDLE : FPS) - (now_s() - t);
         if (spare > 0) {
             struct timespec ts = { 0, (long)(spare * 1e9) };
             nanosleep(&ts, NULL);
