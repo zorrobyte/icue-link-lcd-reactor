@@ -32,7 +32,7 @@ Every display shows generation tokens/sec summed across all requests on all vLLM
 - `reactor`: outer ring is GPU load, core segments spin faster with load, glow shifts cyan to amber to red with power
 - `singularity`: one particle per token, streams per server form spiral arms, trails, photon ring
 - `synapse`: fixed three layer network, one signal per two tokens, neurons flash as signals pass, core flashes on arrival
-- `plasma`: a plasma globe; every running request is a crackling filament to the glass, token pulses race along each server's filaments, the crackle gets more violent with throughput
+- `plasma`: a plasma globe with one filament per request slot (`--max-num-seqs`) on each server. Busy slots crackle and carry token pulses at the real rate, free slots drift faint and dim, and the counter shows busy/total slots per GPU. Set `SLOTS_PER_SERVER` to match your servers
 - `horizon`: passively captures streamed text from the vLLM servers on loopback (libpcap) and drops a legible subset in as words; the rest of the token flow becomes accretion dust. Lensed starfield, spaghettification, gravitational redshift. Nothing is stored or sent anywhere. Needs root or CAP_NET_RAW.
 
 Built for a dual RTX 5090 box running two vLLM servers, but the GPU bus IDs and vLLM ports are constants at the top of each source file.

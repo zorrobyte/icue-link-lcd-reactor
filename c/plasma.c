@@ -1,10 +1,10 @@
 /*
  * plasma: your LLM servers as a plasma globe on the iCUE LINK AIO pump LCD.
  *
- * Every running request is a crackling filament from the electrode to the glass
- * (violet for the ZOTAC's vLLM server, pink for the TUF's). Pulses race outward
- * along each server's filaments at its real token rate; the crackle gets more
- * violent with throughput. Idle, a couple of faint filaments drift.
+ * One filament per request slot (vLLM --max-num-seqs) on each server: violet on the
+ * left for the ZOTAC's, pink on the right for the TUF's. Busy slots crackle brightly
+ * and carry token pulses at the server's real rate; free slots drift faint and dim,
+ * so the globe shows both what's running and the spare capacity.
  * Run with --demo to simulate data, --bench to write preview PNGs.
  */
 #define _GNU_SOURCE
@@ -57,6 +57,7 @@ typedef struct {
     double tok_s;               /* all servers */
     double tok_port[2];         /* per server: [0] ZOTAC's vLLM, [1] TUF's vLLM */
     int    running;
+    int    running_port[2];     /* running requests per server */
 } stats;
 
 static volatile sig_atomic_t stop;
@@ -248,12 +249,14 @@ static void vllm_poll(stats *s, double t)
         double tokens, rate = 0;
         if (http_metrics(vllm_ports[i], buf, 1 << 20) <= 0) {
             have[i] = 0;
+            s->running_port[i] = 0;
             s->tok_port[i] *= 0.5;
             s->tok_s += s->tok_port[i];
             continue;
         }
         tokens   = metric_sum(buf, "vllm:generation_tokens_total");
-        running += (int)metric_sum(buf, "vllm:num_requests_running");
+        s->running_port[i] = (int)metric_sum(buf, "vllm:num_requests_running");
+        running += s->running_port[i];
         if (have[i] && tokens >= last_tokens[i] && t > last_t[i])
             rate = (tokens - last_tokens[i]) / (t - last_t[i]);
         s->tok_port[i] = 0.6 * s->tok_port[i] + 0.4 * rate;
@@ -284,24 +287,27 @@ static void demo_poll(stats *s, double t)
 
 #define ELECTRODE_R     62.0        /* center electrode radius (px) */
 #define GLASS_R         232.0       /* where filaments hit the glass */
-#define MAX_FIL         18
 #define FIL_PTS         48
 #define MAX_PULSES      400
 #define TOKENS_PER_PULSE 12.0
 
+#define SLOTS_PER_SERVER 4          /* vLLM --max-num-seqs on each server */
+#define N_SLOTS         (SLOTS_PER_SERVER * 2)
+#define FREE_GLOW       0.22        /* brightness of an idle slot */
+
 typedef struct {
-    double theta;           /* where it meets the glass */
-    double drift;           /* angular wander speed */
+    double theta, home;     /* current / resting angle where it meets the glass */
     double phase[3];        /* noise phases for its shape */
-    double life;            /* 0..1 fade in/out */
-    int    src;             /* 0 ZOTAC, 1 TUF, 2 idle */
-    int    alive, dying;
-    double px[FIL_PTS], py[FIL_PTS];   /* path this frame */
+    double life;            /* brightness, eased toward 1 when busy, FREE_GLOW when free */
+    double jit;             /* this filament's crackle, eased */
+    int    src;             /* 0 ZOTAC, 1 TUF */
+    int    busy;
+    double px[FIL_PTS], py[FIL_PTS];
 } filament;
 
 typedef struct { int fil; double u; int alive; } pulse;
 
-static filament fils[MAX_FIL];
+static filament fils[N_SLOTS];
 static pulse    pulses[MAX_PULSES];
 static double   pulse_acc[2];
 
@@ -309,72 +315,38 @@ static double frand(void) { return rand() / (double)RAND_MAX; }
 
 static rgb fil_color(int src)
 {
-    static const rgb VIOLET = { 0.55, 0.45, 1.0 };      /* ZOTAC: violet-blue */
-    static const rgb MAGENTA = { 1.0, 0.45, 0.72 };     /* TUF: pink-orange */
-    static const rgb IDLE = { 0.62, 0.40, 0.95 };
-    return src == 0 ? VIOLET : src == 1 ? MAGENTA : IDLE;
+    static const rgb VIOLET = { 0.55, 0.45, 1.0 };      /* ZOTAC */
+    static const rgb MAGENTA = { 1.0, 0.45, 0.72 };     /* TUF */
+    return src == 0 ? VIOLET : MAGENTA;
 }
 
-static int count_src(int src)
+/* Slots fan evenly across each server's half of the globe */
+static void init_slots(void)
 {
-    int n = 0;
-    for (int i = 0; i < MAX_FIL; i++)
-        n += fils[i].alive && !fils[i].dying && fils[i].src == src;
-    return n;
-}
-
-static void add_filament(int src)
-{
-    for (int i = 0; i < MAX_FIL; i++) {
+    for (int i = 0; i < N_SLOTS; i++) {
         filament *f = &fils[i];
-        if (f->alive)
-            continue;
-        /* ZOTAC's requests reach toward the left, TUF's toward the right; pick the emptiest spot */
-        double base = src == 0 ? M_PI : src == 1 ? 0 : 0;
-        double spread = src == 2 ? 2 * M_PI : 2.6;
-        double best = base, best_gap = -1;
-        for (int k = 0; k < 16; k++) {
-            double cand = base + (frand() - 0.5) * spread, gap = 10;
-            for (int j = 0; j < MAX_FIL; j++) {
-                if (!fils[j].alive || j == i)
-                    continue;
-                double d = fabs(remainder(cand - fils[j].theta, 2 * M_PI));
-                gap = fmin(gap, d);
-            }
-            if (gap > best_gap) {
-                best_gap = gap;
-                best = cand;
-            }
-        }
-        f->theta = best;
-        f->drift = (frand() - 0.5) * 0.5;
-        for (int k = 0; k < 3; k++)
-            f->phase[k] = frand() * 100;
-        f->life = 0;
+        int src = i / SLOTS_PER_SERVER, k = i % SLOTS_PER_SERVER;
+        double spread = 2.2, off = (k - (SLOTS_PER_SERVER - 1) / 2.0) * spread / (SLOTS_PER_SERVER - 1);
+        const double lift = 0.28;                           /* keep the lowest slots clear of the stats */
         f->src = src;
-        f->alive = 1;
-        f->dying = 0;
-        return;
+        f->home = f->theta = (src == 0 ? M_PI - off + lift : off - lift);   /* slot 1 at the top on both sides */
+        for (int j = 0; j < 3; j++)
+            f->phase[j] = frand() * 100;
+        f->life = FREE_GLOW;
+        f->jit = 0.2;
     }
-}
-
-static void drop_filament(int src)
-{
-    for (int i = MAX_FIL - 1; i >= 0; i--)
-        if (fils[i].alive && !fils[i].dying && fils[i].src == src) {
-            fils[i].dying = 1;
-            return;
-        }
 }
 
 static void spawn_pulse(int src)
 {
-    int cand[MAX_FIL], n = 0;
-    for (int i = 0; i < MAX_FIL; i++)
-        if (fils[i].alive && !fils[i].dying && fils[i].src == src)
+    int cand[N_SLOTS], n = 0;
+    for (int i = 0; i < N_SLOTS; i++)
+        if (fils[i].src == src && fils[i].busy)
             cand[n++] = i;
     if (!n)
-        return;
+        for (int i = 0; i < N_SLOTS; i++)
+            if (fils[i].src == src)
+                cand[n++] = i;
     for (int i = 0; i < MAX_PULSES; i++)
         if (!pulses[i].alive) {
             pulses[i] = (pulse){ cand[rand() % n], 0, 1 };
@@ -382,63 +354,35 @@ static void spawn_pulse(int src)
         }
 }
 
-/* Target filament count per server: one per running request, a few extra for heavy throughput */
-static int target_fils(double tok_port, int running_share)
-{
-    if (tok_port < 1)
-        return 0;
-    int n = running_share + (int)(tok_port / 400);
-    return n < 1 ? 1 : n > 8 ? 8 : n;
-}
-
 static void simulate(const stats *s, double dt, double t, double *jitter)
 {
-    int idle = s->tok_s < 1 && s->running == 0;
-    double share0 = s->tok_s > 0 ? s->tok_port[0] / s->tok_s : 0.5;
-    int run0 = (int)round(s->running * share0), run1 = s->running - run0;
-    int want[3] = {
-        idle ? 0 : target_fils(s->tok_port[0], run0),
-        idle ? 0 : target_fils(s->tok_port[1], run1),
-        idle ? 2 : 0,
-    };
-    for (int src = 0; src < 3; src++) {
-        int have = count_src(src);
-        if (have < want[src])
-            add_filament(src);
-        else if (have > want[src])
-            drop_filament(src);
-    }
+    /* How violently busy filaments crackle */
+    *jitter = 0.6 + fmin(s->tok_s, 2400) / 1200;
 
-    /* How violently the filaments crackle */
-    *jitter = idle ? 0.25 : 0.6 + fmin(s->tok_s, 2400) / 1200;
-
-    for (int i = 0; i < MAX_FIL; i++) {
+    for (int i = 0; i < N_SLOTS; i++) {
         filament *f = &fils[i];
-        if (!f->alive)
-            continue;
-        f->life = f->dying ? f->life - dt * 2.5 : fmin(1, f->life + dt * 3);
-        if (f->life <= 0) {
-            f->alive = 0;
-            continue;
-        }
-        f->theta += f->drift * dt * (idle ? 0.4 : 1);
-        if (frand() < dt * 0.4)
-            f->drift = (frand() - 0.5) * 0.6;
+        int k = i % SLOTS_PER_SERVER;
+        f->busy = k < s->running_port[f->src];
+        double want = f->busy ? 1 : FREE_GLOW, want_jit = f->busy ? *jitter : 0.2;
+        f->life += (want - f->life) * fmin(1, dt * 4);
+        f->jit += (want_jit - f->jit) * fmin(1, dt * 3);
 
-        /* Path: a smooth wandering curve plus fine jitter, pinned at both ends */
-        for (int k = 0; k < FIL_PTS; k++) {
-            double u = k / (double)(FIL_PTS - 1);
+        /* Wander a little around its home angle */
+        f->theta = f->home + 0.12 * sin(t * (f->busy ? 0.7 : 0.25) + f->phase[0]);
+
+        for (int j = 0; j < FIL_PTS; j++) {
+            double u = j / (double)(FIL_PTS - 1);
             double r = ELECTRODE_R + (GLASS_R - ELECTRODE_R) * u;
             double pin = sin(M_PI * u);
-            double wander = 0.26 * sin(u * 4.3 + t * 0.9 + f->phase[0]) + 0.10 * sin(u * 9.7 - t * 1.7 + f->phase[1]);
-            double crackle = (frand() - 0.5) * 0.028 * *jitter + 0.022 * *jitter * sin(u * 31 + t * 23 + f->phase[2]);
+            double speed = f->busy ? 1 : 0.35;
+            double wander = 0.24 * sin(u * 4.3 + t * 0.9 * speed + f->phase[0]) + 0.09 * sin(u * 9.7 - t * 1.7 * speed + f->phase[1]);
+            double crackle = (frand() - 0.5) * 0.028 * f->jit + 0.022 * f->jit * sin(u * 31 + t * 23 + f->phase[2]);
             double a = f->theta + (wander + crackle) * pin * (0.55 + 0.45 * u);
-            f->px[k] = SIZE / 2.0 + r * cos(a);
-            f->py[k] = SIZE / 2.0 + r * sin(a);
+            f->px[j] = SIZE / 2.0 + r * cos(a);
+            f->py[j] = SIZE / 2.0 + r * sin(a);
         }
     }
 
-    /* Token pulses racing outward along each server's filaments */
     for (int src = 0; src < 2; src++) {
         pulse_acc[src] += s->tok_port[src] / TOKENS_PER_PULSE * dt;
         while (pulse_acc[src] >= 1) {
@@ -451,7 +395,7 @@ static void simulate(const stats *s, double dt, double t, double *jitter)
         if (!p->alive)
             continue;
         p->u += dt * 1.6;
-        if (p->u >= 1 || !fils[p->fil].alive)
+        if (p->u >= 1)
             p->alive = 0;
     }
 }
@@ -503,12 +447,11 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t, dou
     cairo_set_operator(cr, CAIRO_OPERATOR_ADD);
     cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
     cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
-    for (int i = 0; i < MAX_FIL; i++) {
+    for (int i = 0; i < N_SLOTS; i++) {
         const filament *f = &fils[i];
-        if (!f->alive)
-            continue;
         rgb col = fil_color(f->src);
-        double a = f->life * (0.8 + 0.2 * sin(t * (14 + 10 * jitter) + i * 1.7));
+        double flicker = f->busy ? 0.8 + 0.2 * sin(t * (14 + 10 * jitter) + i * 1.7) : 1;
+        double a = f->life * flicker;
 
         fil_path(cr, f, 0, FIL_PTS - 1);
         cairo_set_line_width(cr, 14);
@@ -521,8 +464,8 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t, dou
         cairo_set_source_rgba(cr, 1, 0.95, 1, 0.75 * a);
         cairo_stroke(cr);
 
-        /* A short fork near the glass now and then */
-        if (((int)(t * 9) + i) % 3 == 0) {
+        /* A short fork near the glass now and then, on busy slots */
+        if (f->busy && ((int)(t * 9) + i) % 3 == 0) {
             int k0 = FIL_PTS * 2 / 3;
             double dx = f->px[FIL_PTS - 1] - f->px[k0], dy = f->py[FIL_PTS - 1] - f->py[k0];
             double sgn = (i & 1) ? 1 : -1;
@@ -539,12 +482,13 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t, dou
 
         /* Hot spot where it touches the glass */
         double ex = f->px[FIL_PTS - 1], ey = f->py[FIL_PTS - 1];
-        cairo_pattern_t *g = cairo_pattern_create_radial(ex, ey, 0, ex, ey, 26);
+        double hot = f->busy ? 26 : 12;
+        cairo_pattern_t *g = cairo_pattern_create_radial(ex, ey, 0, ex, ey, hot);
         cairo_pattern_add_color_stop_rgba(g, 0, 1, 0.9, 1, 0.55 * a);
         cairo_pattern_add_color_stop_rgba(g, 0.3, col.r, col.g, col.b, 0.35 * a);
         cairo_pattern_add_color_stop_rgba(g, 1, col.r, col.g, col.b, 0);
         cairo_set_source(cr, g);
-        cairo_arc(cr, ex, ey, 26, 0, 2 * M_PI);
+        cairo_arc(cr, ex, ey, hot, 0, 2 * M_PI);
         cairo_fill(cr);
         cairo_pattern_destroy(g);
     }
@@ -559,11 +503,12 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t, dou
         int k = (int)fk;
         if (k >= FIL_PTS - 1)
             continue;
+        (void)0;
         double fr = fk - k;
         double x = f->px[k] + (f->px[k + 1] - f->px[k]) * fr, y = f->py[k] + (f->py[k + 1] - f->py[k]) * fr;
         rgb col = fil_color(f->src);
         cairo_pattern_t *g = cairo_pattern_create_radial(x, y, 0, x, y, 6);
-        cairo_pattern_add_color_stop_rgba(g, 0, 1, 1, 1, 0.9 * f->life);
+        cairo_pattern_add_color_stop_rgba(g, 0, 1, 1, 1, 0.9 * fmax(f->life, 0.6));
         cairo_pattern_add_color_stop_rgba(g, 1, col.r, col.g, col.b, 0);
         cairo_set_source(cr, g);
         cairo_arc(cr, x, y, 6, 0, 2 * M_PI);
@@ -637,10 +582,8 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t, dou
     text_center(cr, c - 72, c + 180, 26, 1, fil_color(0), txt);
     snprintf(txt, sizeof(txt), "%d\xC2\xB0", s->temp[1]);
     text_center(cr, c + 72, c + 180, 26, 1, fil_color(1), txt);
-    if (s->running) {
-        snprintf(txt, sizeof(txt), "%d req", s->running);
-        text_center(cr, c, c + 180, 18, 1, DIM, txt);
-    }
+    snprintf(txt, sizeof(txt), "%d/%d  %d/%d", s->running_port[0], SLOTS_PER_SERVER, s->running_port[1], SLOTS_PER_SERVER);
+    text_center(cr, c, c + 180, 16, 1, DIM, txt);
 }
 
 /* ---------------------------------------------------------------- main */
@@ -668,6 +611,7 @@ int main(int argc, char **argv)
     signal(SIGPIPE, SIG_IGN);
     srand((unsigned)time(NULL));
 
+    init_slots();
     surf = cairo_image_surface_create(CAIRO_FORMAT_RGB24, SIZE, SIZE);
     cr = cairo_create(surf);
     tj = tj3Init(TJINIT_COMPRESS);
@@ -675,16 +619,16 @@ int main(int argc, char **argv)
     tj3Set(tj, TJPARAM_SUBSAMP, TJSAMP_420);
 
     if (bench) {
-        struct { double tok0, tok1; int run; double w0, w1; const char *png; } scenes[] = {
-            { 723, 884, 8, 470, 460, "plasma_preview.png" },
-            { 180, 0, 1, 250, 30, "plasma_one.png" },
-            { 0, 0, 0, 25, 30, "plasma_idle.png" },
+        struct { double tok0, tok1; int run0, run1; double w0, w1; const char *png; } scenes[] = {
+            { 723, 884, 4, 4, 470, 460, "plasma_preview.png" },
+            { 420, 190, 3, 1, 330, 250, "plasma_one.png" },
+            { 0, 0, 0, 0, 25, 30, "plasma_idle.png" },
         };
         for (int k = 0; k < 3; k++) {
-            memset(fils, 0, sizeof(fils));
             memset(pulses, 0, sizeof(pulses));
             s.tok_port[0] = scenes[k].tok0; s.tok_port[1] = scenes[k].tok1;
-            s.tok_s = s.tok_port[0] + s.tok_port[1]; s.running = scenes[k].run;
+            s.running_port[0] = scenes[k].run0; s.running_port[1] = scenes[k].run1;
+            s.tok_s = s.tok_port[0] + s.tok_port[1]; s.running = scenes[k].run0 + scenes[k].run1;
             s.power[0] = scenes[k].w0; s.power[1] = scenes[k].w1; s.temp[0] = 54; s.temp[1] = 71;
             sh.tok = s.tok_s;
             double b0 = now_s();
@@ -697,8 +641,7 @@ int main(int argc, char **argv)
                 tj3Compress8(tj, cairo_image_surface_get_data(surf), SIZE, cairo_image_surface_get_stride(surf),
                              SIZE, TJPF_BGRX, &jpeg, &len);
             }
-            printf("%s: %.2f ms/frame, jpeg %zu bytes, %d filaments\n", scenes[k].png,
-                   (now_s() - b0) * 1000 / n, len, count_src(0) + count_src(1) + count_src(2));
+            printf("%s: %.2f ms/frame, jpeg %zu bytes\n", scenes[k].png, (now_s() - b0) * 1000 / n, len);
             cairo_surface_write_to_png(surf, scenes[k].png);
         }
         return 0;
@@ -725,8 +668,10 @@ int main(int argc, char **argv)
                 demo_poll(&s, t - t0);
                 s.tok_port[0] *= 6; s.tok_port[1] *= 6;
                 s.tok_s = s.tok_port[0] + s.tok_port[1];
-                s.running = s.tok_s < 60 ? 0 : 1 + (int)(s.tok_s / 250);
                 if (s.tok_s < 60) s.tok_s = s.tok_port[0] = s.tok_port[1] = 0;
+                for (int j = 0; j < 2; j++)
+                    s.running_port[j] = s.tok_port[j] < 30 ? 0 : 1 + (int)fmin(SLOTS_PER_SERVER - 1, s.tok_port[j] / 220);
+                s.running = s.running_port[0] + s.running_port[1];
             } else {
                 gpus_poll(&s);
                 vllm_poll(&s, t);
