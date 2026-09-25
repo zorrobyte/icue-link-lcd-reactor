@@ -280,8 +280,12 @@ static void vllm_poll(stats *s, double t)
     s->tok_s = 0;
     for (int i = 0; i < N_PORTS; i++) {
         double tokens, rate = 0;
-        if (http_metrics(vllm_ports[i], buf, 1 << 20) <= 0) {
-            have[i] = 0;
+        /*
+         * A failed or cut-short fetch (no counter in it) keeps the last good sample
+         * as the baseline, so the next good one gives the rate over the whole gap
+         * instead of a zero followed by a spike.
+         */
+        if (http_metrics(vllm_ports[i], buf, 1 << 20) <= 0 || !strstr(buf, "\nvllm:generation_tokens_total")) {
             s->running_port[i] = 0;
             s->tok_port[i] *= 0.5;
             s->tok_s += s->tok_port[i];
@@ -344,16 +348,27 @@ static void demo_poll(stats *s, double t)
 enum { KID_WATER, KID_DRAINED, KID_REFILL };
 enum { GPU_HUNT, GPU_DRINK, GPU_NAP };
 
+/*
+ * Everyone moves with a smoothed velocity (vx, vy) that eases toward where they
+ * want to go, and faces the way that velocity points. Facing only flips after the
+ * velocity has clearly pointed the other way for a moment (turn), and never
+ * sooner than FACE_HOLD seconds after the last flip (since).
+ */
+#define FACE_VX         12.0        /* px/s of backwards motion that counts as turning */
+#define FACE_TURN       0.25        /* s of turning before the sprite flips */
+#define FACE_HOLD       0.7         /* s between flips at the least */
+
 typedef struct {
-    double x, y, vx, vy, water, step, face;
+    double x, y, vx, vy, water, step, face, turn, since;
+    double dx, dy;                  /* wander direction */
     double hx, hy;                  /* where they head after refilling */
     double safe;                    /* head start after refilling: GPUs ignore them */
     double timer;
-    int    state, shirt, skin;
+    int    state, shirt, skin, homing;
 } kid;
 
 typedef struct {
-    double x, y, face, fan, step, timer, speed;
+    double x, y, vx, vy, face, turn, since, fan, step, timer, speed;
     int    state, target;
 } gpu;
 
@@ -513,6 +528,7 @@ static void init_actors(void)
 {
     for (int i = 0; i < N_KIDS; i++) {
         kid *k = &kids[i];
+        memset(k, 0, sizeof(*k));
         k->x = ARENA_X0 + 30 + frand() * (ARENA_X1 - ARENA_X0 - 60);
         k->y = ARENA_Y0 + frand() * (ARENA_Y1 - ARENA_Y0);
         k->water = 1;
@@ -520,22 +536,74 @@ static void init_actors(void)
         k->shirt = i % 5;
         k->skin = rand() % 3;
         k->face = frand() < 0.5 ? -1 : 1;
-        k->hx = k->x;
-        k->hy = k->y;
+        k->since = FACE_HOLD;
     }
     for (int g = 0; g < 2; g++) {
+        memset(&gpus[g], 0, sizeof(gpus[g]));
         gpus[g].x = DOOR_X + g * 150;
         gpus[g].y = DOOR_Y + g * 12;
         gpus[g].face = 1;
+        gpus[g].since = FACE_HOLD;
         gpus[g].state = GPU_NAP;
         gpus[g].target = -1;
     }
 }
 
-static void clamp_arena(double *x, double *y)
+/* Keep inside the arena, dropping any velocity that pushes into the edge. */
+static void clamp_arena(double *x, double *y, double *vx, double *vy)
 {
-    *x = fmax(ARENA_X0, fmin(ARENA_X1, *x));
-    *y = fmax(ARENA_Y0, fmin(ARENA_Y1, *y));
+    if (*x < ARENA_X0 || *x > ARENA_X1) {
+        *x = fmax(ARENA_X0, fmin(ARENA_X1, *x));
+        if (vx)
+            *vx = 0;
+    }
+    if (*y < ARENA_Y0 || *y > ARENA_Y1) {
+        *y = fmax(ARENA_Y0, fmin(ARENA_Y1, *y));
+        if (vy)
+            *vy = 0;
+    }
+}
+
+/* Ease velocity toward the wanted one (a fifth of a second time constant) and move. */
+static void steer(double *x, double *y, double *vx, double *vy, double wvx, double wvy, double dt)
+{
+    double k = fmin(1, dt * 5);
+    *vx += (wvx - *vx) * k;
+    *vy += (wvy - *vy) * k;
+    *x += *vx * dt;
+    *y += *vy * dt;
+    clamp_arena(x, y, vx, vy);
+}
+
+/* Flip to face the way we move, only once it is clear we turned around. */
+static void update_face(double *face, double *turn, double *since, double vx, double dt)
+{
+    *since += dt;
+    if (vx * *face < -FACE_VX)
+        *turn += dt;
+    else
+        *turn = 0;
+    if (*turn >= FACE_TURN && *since >= FACE_HOLD) {
+        *face = -*face;
+        *turn = 0;
+        *since = 0;
+    }
+}
+
+static int kid_huntable(int i, int gi)
+{
+    return kids[i].state == KID_WATER && kids[i].safe <= 0 &&
+           !(gpus[!gi].state == GPU_DRINK && gpus[!gi].target == i);
+}
+
+/* How scary a spot is for a kid: closeness to each hunting GPU within 150 px. */
+static double kid_threat(double x, double y)
+{
+    double sum = 0;
+    for (int gi = 0; gi < 2; gi++)
+        if (gpus[gi].state == GPU_HUNT)
+            sum += fmax(0, 150 - hypot(x - gpus[gi].x, y - gpus[gi].y));
+    return sum;
 }
 
 static void simulate(const stats *s, double dt, double t)
@@ -552,7 +620,7 @@ static void simulate(const stats *s, double dt, double t)
     /* GPUs: hunt kids who still have water, drink, nap when their server is idle */
     for (int gi = 0; gi < 2; gi++) {
         gpu *g = &gpus[gi];
-        double tokp = s->tok_port[gi];
+        double tokp = s->tok_port[gi], wvx = 0, wvy = 0;
         g->fan += dt * (2 + tokp / 60);
         if (tokp < 1 && g->state != GPU_DRINK) {
             g->state = GPU_NAP;
@@ -562,20 +630,9 @@ static void simulate(const stats *s, double dt, double t)
         }
         g->speed = 32 + fmin(tokp, 1400) * 0.14;
 
-        if (g->state == GPU_NAP) {
-            double tx = DOOR_X + gi * 150, ty = DOOR_Y + gi * 12;
-            double dx = tx - g->x, dy = ty - g->y, d = hypot(dx, dy);
-            if (d > 3) {
-                g->x += dx / d * 40 * dt;
-                g->y += dy / d * 40 * dt;
-                if (fabs(dx) > 6)
-                    g->face = dx > 0 ? 1 : -1;
-                g->step += dt * 8;
-            }
-            continue;
-        }
         if (g->state == GPU_DRINK) {
             kid *k = &kids[g->target];
+            g->vx = g->vy = 0;
             k->water -= dt / 1.2;
             if (k->water <= 0) {
                 k->water = 0;
@@ -584,54 +641,69 @@ static void simulate(const stats *s, double dt, double t)
                 g->target = -1;
                 g->timer = 0.9;                 /* a satisfied pause */
             }
+            g->since += dt;
             continue;
         }
-        if (g->timer > 0) {
+        if (g->state == GPU_NAP) {
+            double dx = DOOR_X + gi * 150 - g->x, dy = DOOR_Y + gi * 12 - g->y, d = hypot(dx, dy);
+            if (d > 3) {
+                wvx = dx / d * 40 * fmin(1, d / 20);
+                wvy = dy / d * 40 * fmin(1, d / 20);
+            }
+        } else if (g->timer > 0) {
             g->timer -= dt;
-            continue;
-        }
-        /* pick the nearest kid with water that the other GPU isn't already drinking from */
-        int best = -1;
-        double bd = 1e9;
-        for (int i = 0; i < N_KIDS; i++) {
-            if (kids[i].state != KID_WATER || kids[i].safe > 0 ||
-                (gpus[!gi].state == GPU_DRINK && gpus[!gi].target == i))
-                continue;
-            double d = hypot(kids[i].x - g->x, kids[i].y - g->y);
-            if (d < bd) {
-                bd = d;
-                best = i;
+        } else {
+            /*
+             * Chase the nearest kid with water that the other GPU isn't drinking from,
+             * but stick with the current one unless another is much closer.
+             */
+            int best = -1;
+            double bd = 1e9, cd = 1e9;
+            for (int i = 0; i < N_KIDS; i++) {
+                if (!kid_huntable(i, gi))
+                    continue;
+                double d = hypot(kids[i].x - g->x, kids[i].y - g->y);
+                if (d < bd) {
+                    bd = d;
+                    best = i;
+                }
+                if (i == g->target)
+                    cd = d;
+            }
+            if (g->target < 0 || cd > 1e8 || bd < cd * 0.6)
+                g->target = best;
+            if (g->target >= 0) {
+                kid *k = &kids[g->target];
+                double dx = k->x - g->x, dy = k->y - g->y, d = hypot(dx, dy);
+                /* caught: straw in the cup (a kid just behind waits for us to turn) */
+                if (d < 50 && (fabs(dx) < 10 || dx * g->face > 0 || g->since >= FACE_HOLD)) {
+                    g->state = GPU_DRINK;
+                    if (fabs(dx) > 10 && dx * g->face < 0) {
+                        g->face = -g->face;
+                        g->since = g->turn = 0;
+                    }
+                    continue;
+                }
+                wvx = dx / d * g->speed;
+                wvy = dy / d * g->speed;
             }
         }
-        g->target = best;
-        if (best < 0) {
+        /* keep the two GPUs from standing inside each other */
+        {
+            gpu *o = &gpus[!gi];
+            double dx = g->x - o->x, dy = g->y - o->y, d = hypot(dx, dy);
+            if (d < 110 && d > 0.1 && g->state != GPU_NAP) {
+                wvx += dx / d * (110 - d) * 1.5;
+                wvy += dy / d * (110 - d) * 1.5;
+            }
+        }
+        steer(&g->x, &g->y, &g->vx, &g->vy, wvx, wvy, dt);
+        update_face(&g->face, &g->turn, &g->since, g->vx, dt);
+        double v = hypot(g->vx, g->vy);
+        if (v > 5)
+            g->step += dt * (g->state == GPU_NAP ? 8 : 4 + v * 0.08);
+        else
             g->step += dt * 2;
-            continue;
-        }
-        kid *k = &kids[best];
-        double dx = k->x - g->x, dy = k->y - g->y, d = hypot(dx, dy);
-        if (fabs(dx) > 20)
-            g->face = dx > 0 ? 1 : -1;
-        if (d < 50) {
-            g->state = GPU_DRINK;               /* caught: straw in the cup */
-            continue;
-        }
-        g->x += dx / d * g->speed * dt;
-        g->y += dy / d * g->speed * dt;
-        g->step += dt * (4 + g->speed * 0.08);
-        clamp_arena(&g->x, &g->y);
-    }
-
-    {
-        double dx = gpus[0].x - gpus[1].x, dy = gpus[0].y - gpus[1].y, d = hypot(dx, dy);
-        if (d < 110 && d > 0.1) {
-            for (int gi = 0; gi < 2; gi++) {
-                double sgn = gi ? -1 : 1;
-                gpus[gi].x += sgn * dx / d * (110 - d) * 1.5 * dt;
-                gpus[gi].y += sgn * dy / d * (110 - d) * 1.5 * dt;
-                clamp_arena(&gpus[gi].x, &gpus[gi].y);
-            }
-        }
     }
 
     /* Kids: wander with water, flee nearby GPUs, walk to the well when drained, refill */
@@ -639,61 +711,95 @@ static void simulate(const stats *s, double dt, double t)
         kid *k = &kids[i];
         int being_drunk = (gpus[0].state == GPU_DRINK && gpus[0].target == i) ||
                           (gpus[1].state == GPU_DRINK && gpus[1].target == i);
-        double wx = 0, wy = 0, speed = 28;
+        double wvx = 0, wvy = 0;
         k->safe -= dt;
-        if (being_drunk) {
+        if (being_drunk || k->state == KID_REFILL) {
             k->vx = k->vy = 0;
+            k->since += dt;
+            k->turn = 0;
+            if (k->state == KID_REFILL) {
+                k->timer -= dt;
+                k->water = fmin(1, k->water + dt / 1.6);
+                if (k->timer <= 0) {
+                    k->state = KID_WATER;
+                    k->water = 1;
+                    k->safe = 2.5;
+                    /* pick a spot away from the well */
+                    double a = frand() * 2 * M_PI;
+                    k->hx = WELL_X + cos(a) * (110 + frand() * 60);
+                    k->hy = WELL_Y + 50 + sin(a) * 40;
+                    clamp_arena(&k->hx, &k->hy, NULL, NULL);
+                    k->homing = 1;
+                }
+            }
             continue;
         }
         if (k->state == KID_WATER) {
-            for (int gi = 0; gi < 2; gi++) {
-                if (gpus[gi].state != GPU_HUNT)
-                    continue;
-                double dx = k->x - gpus[gi].x, dy = k->y - gpus[gi].y, d = hypot(dx, dy);
-                if (d < 150 && d > 0.1) {
-                    wx += dx / d * (150 - d);
-                    wy += dy / d * (150 - d);
+            if (kid_threat(k->x, k->y) > 0) {
+                /*
+                 * Run! Try 16 directions and take the one that ends up least threatened,
+                 * which also slides along edges and out of corners. Favouring the way
+                 * we already run keeps near-equal choices from flipping every frame.
+                 */
+                double v = hypot(k->vx, k->vy), best = 1e9, bx = 0, by = 0;
+                for (int a = 0; a < 16; a++) {
+                    double cx = cos(a * M_PI / 8), cy = sin(a * M_PI / 8);
+                    double px = k->x + cx * 45, py = k->y + cy * 45;
+                    clamp_arena(&px, &py, NULL, NULL);
+                    double score = kid_threat(px, py) + (45 - hypot(px - k->x, py - k->y));
+                    if (v > 10)
+                        score -= 25 * (cx * k->vx + cy * k->vy) / v;
+                    if (score < best) {
+                        best = score;
+                        bx = cx;
+                        by = cy;
+                    }
                 }
-            }
-            if (wx || wy) {
-                speed = 90;                     /* run! */
-            } else if (hypot(k->hx - k->x, k->hy - k->y) > 10) {
-                wx = k->hx - k->x;              /* head back out into town */
-                wy = k->hy - k->y;
-                speed = 50;
+                wvx = bx * 90;
+                wvy = by * 90;
+                /* once safe, keep strolling the same way, not back toward the GPU */
+                k->dx = bx;
+                k->dy = by * 0.5;
+                k->timer = 1.5 + frand() * 1.5;
+                k->homing = 0;                  /* escaped: stay out here, not back by the GPU */
+            } else if (k->homing) {
+                double dx = k->hx - k->x, dy = k->hy - k->y, d = hypot(dx, dy);
+                if (d < 10) {
+                    /* arrived: stroll on the same way for a bit, then wander from here */
+                    double v = hypot(k->vx, k->vy);
+                    k->homing = 0;
+                    k->dx = v > 1 ? k->vx / v : 0;
+                    k->dy = v > 1 ? k->vy / v * 0.5 : 0;
+                    k->timer = 1 + frand() * 2;
+                } else {
+                    wvx = dx / d * 50;          /* head back out into town */
+                    wvy = dy / d * 50;
+                }
             } else {
                 k->timer -= dt;
                 if (k->timer <= 0) {
                     k->timer = 1.5 + frand() * 2.5;
                     double a = frand() * 2 * M_PI;
-                    k->vx = cos(a);
-                    k->vy = sin(a) * 0.5;
+                    k->dx = cos(a);
+                    k->dy = sin(a) * 0.5;
                 }
-                wx = k->vx;
-                wy = k->vy;
-            }
-        } else if (k->state == KID_DRAINED) {
-            wx = WELL_X + (i - 1.5) * 30 - k->x;
-            wy = WELL_Y + 26 - k->y;
-            speed = 38;
-            if (hypot(wx, wy) < 10) {
-                k->state = KID_REFILL;
-                k->timer = 1.6;
+                /* turn back at the edges */
+                if ((k->x - ARENA_X0 < 8 && k->dx < 0) || (ARENA_X1 - k->x < 8 && k->dx > 0))
+                    k->dx = -k->dx;
+                if ((k->y - ARENA_Y0 < 4 && k->dy < 0) || (ARENA_Y1 - k->y < 4 && k->dy > 0))
+                    k->dy = -k->dy;
+                wvx = k->dx * 28;
+                wvy = k->dy * 28;
             }
         } else {
-            k->timer -= dt;
-            k->water = fmin(1, k->water + dt / 1.6);
-            if (k->timer <= 0) {
-                k->state = KID_WATER;
-                k->water = 1;
-                k->safe = 2.5;
-                /* pick a spot away from the well */
-                double a = frand() * 2 * M_PI;
-                k->hx = WELL_X + cos(a) * (110 + frand() * 60);
-                k->hy = WELL_Y + 50 + sin(a) * 40;
-                clamp_arena(&k->hx, &k->hy);
+            double dx = WELL_X + (i - 1.5) * 30 - k->x, dy = WELL_Y + 26 - k->y, d = hypot(dx, dy);
+            if (d < 10) {
+                k->state = KID_REFILL;
+                k->timer = 1.6;
+            } else {
+                wvx = dx / d * 38 * fmin(1, d / 20);
+                wvy = dy / d * 38 * fmin(1, d / 20);
             }
-            continue;
         }
         /* personal space */
         for (int j = 0; j < N_KIDS; j++) {
@@ -701,19 +807,15 @@ static void simulate(const stats *s, double dt, double t)
                 continue;
             double dx = k->x - kids[j].x, dy = k->y - kids[j].y, d = hypot(dx, dy);
             if (d < 44 && d > 0.1) {
-                k->x += dx / d * (44 - d) * 2 * dt;
-                k->y += dy / d * (44 - d) * 2 * dt;
+                wvx += dx / d * (44 - d) * 2;
+                wvy += dy / d * (44 - d) * 2;
             }
         }
-        double n = hypot(wx, wy);
-        if (n > 0.01) {
-            k->x += wx / n * speed * dt;
-            k->y += wy / n * speed * dt;
-            if (fabs(wx / n) > 0.4)
-                k->face = wx > 0 ? 1 : -1;      /* no flip-flopping on small wobbles */
-            k->step += dt * (3 + speed * 0.12);
-        }
-        clamp_arena(&k->x, &k->y);
+        steer(&k->x, &k->y, &k->vx, &k->vy, wvx, wvy, dt);
+        update_face(&k->face, &k->turn, &k->since, k->vx, dt);
+        double v = hypot(k->vx, k->vy);
+        if (v > 3)
+            k->step += dt * (3 + v * 0.12);
     }
     (void)t;
 }
