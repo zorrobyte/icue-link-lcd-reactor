@@ -16,7 +16,7 @@ Built for a dual RTX 5090 box running two vLLM servers (one per GPU), but the GP
 <td align="center"><img src="docs/gif/synapse.gif" width="240"><br><b>synapse</b></td>
 </tr>
 <tr>
-<td></td>
+<td align="center"><img src="docs/gif/autumn.gif" width="240"><br><b>autumn</b></td>
 <td align="center"><img src="docs/gif/reactor.gif" width="240"><br><b>reactor</b></td>
 <td></td>
 </tr>
@@ -27,7 +27,7 @@ The GIFs are recorded from each display's `--demo` mode (simulated data), `brrr`
 ## Contents
 
 - [Quick start](#quick-start)
-- [Displays](#displays): [brrr](#brrr) · [horizon](#horizon) · [plasma](#plasma) · [fishbowl](#fishbowl) · [singularity](#singularity) · [synapse](#synapse) · [reactor](#reactor)
+- [Displays](#displays): [brrr](#brrr) · [horizon](#horizon) · [plasma](#plasma) · [fishbowl](#fishbowl) · [autumn](#autumn) · [singularity](#singularity) · [synapse](#synapse) · [reactor](#reactor)
 - [Configuration](#configuration)
 - [Command line and environment](#command-line-and-environment)
 - [Performance](#performance)
@@ -163,6 +163,26 @@ Six fish of different sizes (blue tang, two goldfish, yellow tang, red, purple) 
 
 ---
 
+### autumn
+
+<img src="docs/autumn.png" width="480" align="right">
+
+A layered autumn valley at golden hour where the falling maple leaves are your tokens.
+
+| On screen | Driven by |
+|---|---|
+| Leaves falling from the **golden** branch (top left) | GPU 0's server tok/s, **one leaf per 16 tokens** |
+| Leaves falling from the **red** branch (top right) | GPU 1's server tok/s, same rate |
+| Wind (how far leaves drift) | total tok/s, with random gusts |
+| The odd stray leaf | idle |
+| Text on the foreground | total tok/s (or "quiet"), total watts, GPU 0 temp (gold), GPU 1 temp (red) |
+
+The sky, sun, hills and branches never change, so they are drawn once at startup and cached; each frame only draws the falling leaves and text. It runs at 20 fps while leaves are falling and drops to 6 fps when idle. The cheapest display after `reactor`: about 4% of a core under full load. `TOKENS_PER_LEAF`, `FPS_BUSY` and `FPS_IDLE` are in `c/autumn.c`.
+
+<br clear="right">
+
+---
+
 ### singularity
 
 <img src="docs/singularity.png" width="480" align="right">
@@ -275,9 +295,10 @@ Render + JPEG encode per frame on a Ryzen 9 9950X3D, from `--bench`:
 | `brrr` | ~8.5 ms | 20 (30 in showcase) | ~17% (estimated) |
 | `plasma` | ~3 to 6 ms | 24 | ~10% (estimated) |
 | `fishbowl` | ~2 to 5.5 ms | 24 | ~10% (estimated) |
+| `autumn` | ~0.4 to 2.5 ms | 20 (6 idle) | ~4% under load, measured |
 | `reactor` (Python prototype) | ~12 ms | 12 | ~15% |
 
-Most of the cost is cairo drawing; JPEG encoding with libjpeg-turbo is well under a millisecond.
+Most of the cost is cairo drawing; JPEG encoding with libjpeg-turbo is well under a millisecond. `autumn` shows the cheap way to build a display: draw everything static once into cached surfaces, only draw what moves each frame, and drop the frame rate when idle.
 
 ## How the screen works
 
