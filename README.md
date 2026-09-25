@@ -16,6 +16,10 @@ Live LLM dashboards for the round LCD on Corsair iCUE LINK AIO pumps (TITAN / H-
 
 Needs the [Anton](https://fonts.google.com/specimen/Anton) font (OFL). `brrr_classic` is the plainer first version.
 
+## Plasma globe
+
+<p align="center"><img src="docs/plasma.png" width="640" alt="plasma: busy, one request, idle"></p>
+
 ## All displays
 
 Every display shows generation tokens/sec summed across all requests on all vLLM servers, total GPU watts, per GPU temperature and load. GPU 0's server is blue, GPU 1's is orange.
@@ -28,6 +32,7 @@ Every display shows generation tokens/sec summed across all requests on all vLLM
 - `reactor`: outer ring is GPU load, core segments spin faster with load, glow shifts cyan to amber to red with power
 - `singularity`: one particle per token, streams per server form spiral arms, trails, photon ring
 - `synapse`: fixed three layer network, one signal per two tokens, neurons flash as signals pass, core flashes on arrival
+- `plasma`: a plasma globe; every running request is a crackling filament to the glass, token pulses race along each server's filaments, the crackle gets more violent with throughput
 - `horizon`: passively captures streamed text from the vLLM servers on loopback (libpcap) and drops a legible subset in as words; the rest of the token flow becomes accretion dust. Lensed starfield, spaghettification, gravitational redshift. Nothing is stored or sent anywhere. Needs root or CAP_NET_RAW.
 
 Built for a dual RTX 5090 box running two vLLM servers, but the GPU bus IDs and vLLM ports are constants at the top of each source file.
@@ -43,6 +48,7 @@ Render + JPEG encode per frame on a Ryzen 9 9950X3D:
 | `synapse` (C) | ~3.6 ms | 20 | ~16% |
 | `horizon` (C) | ~4.7 ms | 20 | ~10% |
 | `brrr` (C) | ~8.5 ms | 20 (30 in showcase) | ~17% (estimated) |
+| `plasma` (C) | ~3 to 6 ms | 24 | ~10% (estimated) |
 | `reactor` (Python prototype) | ~12 ms | 12 | ~15% |
 
 The C versions use cairo, libjpeg-turbo and NVML. The Python version is the original prototype of `reactor` and is easier to hack on.

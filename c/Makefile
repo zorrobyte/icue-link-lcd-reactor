@@ -2,11 +2,11 @@ CFLAGS  ?= -O2 -march=native -Wall -Wextra
 CFLAGS  += $(shell pkg-config --cflags cairo libturbojpeg) -I/opt/cuda/include
 LDLIBS  += $(shell pkg-config --libs cairo libturbojpeg) -lnvidia-ml -lm
 
-DISPLAYS = reactor singularity synapse horizon brrr brrr_classic
+DISPLAYS = reactor singularity synapse horizon brrr brrr_classic plasma
 
 all: $(DISPLAYS)
 
-reactor singularity synapse brrr brrr_classic: %: %.c
+reactor singularity synapse brrr brrr_classic plasma: %: %.c
 	$(CC) $(CFLAGS) -o $@ $< $(LDLIBS)
 
 horizon: horizon.c
