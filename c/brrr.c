@@ -547,10 +547,23 @@ static void text_path_centered(cairo_t *cr, const char *font, double x, double y
         *out_size = size;
 }
 
+/* Usable width of the round screen for text centered at y, cap height h, with a margin */
+static double chord_width(double y, double h)
+{
+    double c = SIZE / 2.0, r = SIZE / 2.0 - 22;          /* stay clear of the vignette at the rim */
+    double dy = fmax(fabs(y - h / 2 - c), fabs(y + h / 2 - c));
+    return dy >= r ? 0 : 2 * sqrt(r * r - dy * dy);
+}
+
 /* Meme text: neon glow, thick dark outline, bright fill */
 static void neon_text(cairo_t *cr, double x, double y, double size, double max_w, rgb fill, rgb glow, const char *s)
 {
     double sz;
+    if (fabs(x - SIZE / 2.0) < 1) {
+        double fit = chord_width(y, size * 0.8) - size * 0.3;     /* leave room for outline + glow */
+        if (fit > 0 && fit < max_w)
+            max_w = fit;
+    }
     text_path_centered(cr, CAPTION_FONT, x, y, size, max_w, s, &sz);
     cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
     for (int k = 3; k >= 1; k--) {
@@ -875,43 +888,58 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t)
         neon_text(cr, c, 176, 38, 220, (rgb){ 0.6, 0.6, 0.75 }, NEON_CYAN, "0 TOK/S");
     } else {
         snprintf(txt, sizeof(txt), "%.0f", tok);
-        neon_text(cr, c, 168, 80, 240, WHITE, NEON_PINK, txt);
-        neon_text(cr, c, 218, 22, 120, NEON_CYAN, NEON_CYAN, "TOK/S");
+        neon_text(cr, c, 176, 76, 240, WHITE, NEON_PINK, txt);
+        neon_text(cr, c, 224, 22, 120, NEON_CYAN, NEON_CYAN, "TOK/S");
     }
 
-    /* Caption */
-    if (caption_override) {
-        int agi = !strncmp(caption_override, "AGI", 3);
-        neon_text(cr, c, 64, 50, 330, agi ? (rgb){ 0.6, 1.0, 0.7 } : WHITE, agi ? (rgb){ 0.2, 1.0, 0.4 } : NEON_CYAN,
-                  caption_override);
-    } else if (asleep) {
-        neon_text(cr, c, 64, 50, 300, WHITE, NEON_CYAN, "WEN PROMPT?");
-    } else if (tok >= AGI_TOK && fmod(t, 9) >= 6) {
-        neon_text(cr, c, 64, 50, 330, (rgb){ 0.6, 1.0, 0.7 }, (rgb){ 0.2, 1.0, 0.4 }, "AGI ACHIEVED INTERNALLY");
-    } else if (tok >= HOT_TOK && fmod(t, 6) >= 3) {
-        neon_text(cr, c, 64, 50, 300, (rgb){ 1.0, 0.62, 0.2 }, (rgb){ 1.0, 0.3, 0.1 }, "THIS IS FINE");
-    } else {
-        int rs = 2 + (int)fmin(12, tok / 150);
-        char brr[32] = "BR";
-        for (int i = 0; i < rs && i < 28; i++)
-            strcat(brr, "R");
-        snprintf(txt, sizeof(txt), "GPU GO %s", tok < 300 ? "BRR" : brr);
-        neon_text(cr, c, 64, 50, 330, WHITE, NEON_PINK, txt);
+    /* Caption: long ones go on two lines so they stay big on a round screen */
+    {
+        const char *l1 = NULL, *l2 = NULL;
+        rgb fill = WHITE, glow = NEON_PINK;
+        char brr[32];
+        if (caption_override) {
+            if (!strncmp(caption_override, "AGI", 3)) {
+                l1 = "AGI ACHIEVED"; l2 = "INTERNALLY";
+                fill = (rgb){ 0.6, 1.0, 0.7 }; glow = (rgb){ 0.2, 1.0, 0.4 };
+            } else {
+                l1 = caption_override; glow = NEON_CYAN;
+            }
+        } else if (asleep) {
+            l1 = "WEN PROMPT?"; glow = NEON_CYAN;
+        } else if (tok >= AGI_TOK && fmod(t, 9) >= 6) {
+            l1 = "AGI ACHIEVED"; l2 = "INTERNALLY";
+            fill = (rgb){ 0.6, 1.0, 0.7 }; glow = (rgb){ 0.2, 1.0, 0.4 };
+        } else if (tok >= HOT_TOK && fmod(t, 6) >= 3) {
+            l1 = "THIS IS FINE";
+            fill = (rgb){ 1.0, 0.62, 0.2 }; glow = (rgb){ 1.0, 0.3, 0.1 };
+        } else {
+            int rs = tok < 300 ? 1 : 2 + (int)fmin(12, tok / 150);
+            strcpy(brr, "BR");
+            for (int i = 0; i < rs && i < 28; i++)
+                strcat(brr, "R");
+            l1 = "GPU GO"; l2 = brr;
+        }
+        if (l2) {
+            neon_text(cr, c, 60, 40, 300, fill, glow, l1);
+            neon_text(cr, c, 104, 46, 330, fill, glow, l2);
+        } else {
+            neon_text(cr, c, 82, 50, 330, fill, glow, l1);
+        }
     }
 
     /* Bottom: each server's tok/s either side of total watts */
     snprintf(txt, sizeof(txt), "%.0fW", total_w);
-    neon_text(cr, c, 446, 30, 110, WHITE, NEON_PINK, txt);
+    neon_text(cr, c, 428, 30, 110, WHITE, NEON_PINK, txt);
     snprintf(txt, sizeof(txt), "%.0f", s->tok_port[0]);
-    neon_text(cr, c - 104, 434, 28, 90, BLUE, BLUE, txt);
+    neon_text(cr, c - 96, 400, 30, 90, BLUE, BLUE, txt);
     snprintf(txt, sizeof(txt), "%.0f", s->tok_port[1]);
-    neon_text(cr, c + 104, 434, 28, 90, ORANGE, ORANGE, txt);
+    neon_text(cr, c + 96, 400, 30, 90, ORANGE, ORANGE, txt);
 
     /* CRT scanlines and a round vignette */
     cairo_set_source_surface(cr, scanlines, 0, 0);
     cairo_paint(cr);
     {
-        cairo_pattern_t *v = cairo_pattern_create_radial(c, c, 170, c, c, 250);
+        cairo_pattern_t *v = cairo_pattern_create_radial(c, c, 205, c, c, 252);
         cairo_pattern_add_color_stop_rgba(v, 0, 0, 0, 0, 0);
         cairo_pattern_add_color_stop_rgba(v, 1, 0, 0, 0, 0.75);
         cairo_set_source(cr, v);
