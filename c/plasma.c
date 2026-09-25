@@ -1,8 +1,8 @@
 /*
  * plasma: your LLM servers as a plasma globe on the iCUE LINK AIO pump LCD.
  *
- * One filament per busy request slot (vLLM --max-num-seqs) on each server: violet
- * for the ZOTAC's, pink for the TUF's. Filaments roam and swirl around the globe,
+ * One filament per busy request slot (vLLM --max-num-seqs) on each server: blue
+ * for the ZOTAC's, orange for the TUF's. Filaments roam and swirl around the globe,
  * faster with throughput, and push apart like a real plasma ball. Busy slots crackle
  * and carry token pulses at the server's real rate; free slots are hidden, fading
  * in and out as requests start and finish.
@@ -317,9 +317,9 @@ static double frand(void) { return rand() / (double)RAND_MAX; }
 
 static rgb fil_color(int src)
 {
-    static const rgb VIOLET = { 0.55, 0.45, 1.0 };      /* ZOTAC */
-    static const rgb MAGENTA = { 1.0, 0.45, 0.72 };     /* TUF */
-    return src == 0 ? VIOLET : MAGENTA;
+    static const rgb ELECTRIC_BLUE = { 0.25, 0.70, 1.0 };   /* ZOTAC */
+    static const rgb HOT_ORANGE = { 1.0, 0.55, 0.12 };      /* TUF */
+    return src == 0 ? ELECTRIC_BLUE : HOT_ORANGE;
 }
 
 /* Slots fan evenly across each server's half of the globe */
