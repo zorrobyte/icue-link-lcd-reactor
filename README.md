@@ -24,6 +24,10 @@ Needs the [Anton](https://fonts.google.com/specimen/Anton) font (OFL). `brrr_cla
 
 <p align="center"><img src="docs/fishbowl.png" width="640" alt="fishbowl: busy, some requests, idle"></p>
 
+## The Eye
+
+<p align="center"><img src="docs/eye.png" width="560" alt="eye: working hard, light load, drowsy, asleep"></p>
+
 ## All displays
 
 Every display shows generation tokens/sec summed across all requests on all vLLM servers, total GPU watts, per GPU temperature and load. GPU 0's server is blue, GPU 1's is orange.
@@ -38,6 +42,7 @@ Every display shows generation tokens/sec summed across all requests on all vLLM
 - `synapse`: fixed three layer network, one signal per two tokens, neurons flash as signals pass, core flashes on arrival
 - `plasma`: a plasma globe with one filament per busy request slot (`--max-num-seqs`) on each server. Filaments roam and swirl around the globe, faster with throughput, and push apart like a real plasma ball. Busy slots crackle and carry token pulses at the real rate, free slots are hidden, and the counter shows busy/total slots per GPU. Set `SLOTS_PER_SERVER` to match your servers
 - `fishbowl`: an aquarium of six pet fish fed by your LLM. Generated tokens from every server sprinkle in as food flakes at random spots on the surface (one per 25 tokens) and the fish perk up, chase and eat them; idle, they cruise lazily. Light rays, caustics, seaweed, a bubbler and a very slow snail
+- `eye`: a giant eyeball watching your LLM. Saccades quicken with tokens/sec and lean toward the busier GPU, the pupil dilates with throughput and flinches when a prompt lands after idle, it blinks, gets drowsy and falls asleep when idle, turns bloodshot with power draw and cries past ~1 kW
 - `horizon`: passively captures streamed text from the vLLM servers on loopback (libpcap) and drops a legible subset in as words; the rest of the token flow becomes accretion dust. Lensed starfield, spaghettification, gravitational redshift. Nothing is stored or sent anywhere. Needs root or CAP_NET_RAW.
 
 Built for a dual RTX 5090 box running two vLLM servers, but the GPU bus IDs and vLLM ports are constants at the top of each source file.
@@ -55,6 +60,7 @@ Render + JPEG encode per frame on a Ryzen 9 9950X3D:
 | `brrr` (C) | ~8.5 ms | 20 (30 in showcase) | ~17% (estimated) |
 | `plasma` (C) | ~3 to 6 ms | 24 | ~10% (estimated) |
 | `fishbowl` (C) | ~2 to 5.5 ms | 24 | ~10% (estimated) |
+| `eye` (C) | ~3 ms | 24 | ~7% (estimated) |
 | `reactor` (Python prototype) | ~12 ms | 12 | ~15% |
 
 The C versions use cairo, libjpeg-turbo and NVML. The Python version is the original prototype of `reactor` and is easier to hack on.
