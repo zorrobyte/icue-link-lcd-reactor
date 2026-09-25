@@ -2,6 +2,8 @@ reactor
 singularity
 synapse
 horizon
+brrr
+brrr_classic
 *_preview.png
 __pycache__/
 *.pyc

@@ -2,6 +2,22 @@
 
 Live LLM dashboards for the round LCD on Corsair iCUE LINK AIO pumps (TITAN / H-series LCD cap), on Linux. No iCUE, no OpenLinkHub, it talks to the screen directly.
 
+## GPU GO BRRR
+
+<p align="center"><img src="docs/brrr.png" width="640" alt="brrr: synthwave llama on a hamster wheel"></p>
+
+`brrr` is the meme one. A synthwave pixel-art llama runs on a neon hamster wheel at your real tokens/sec:
+
+- "GPU GO BRRR" gains an **R for every 150 tok/s**
+- the sun **rises with throughput** and sets when idle, the grid floor scrolls at your token rate
+- sweat from 500 tok/s, **deal-with-it shades drop at 800**, flames and **THIS IS FINE** from 1200, **AGI ACHIEVED INTERNALLY** past 2000
+- idle, the llama falls asleep: **WEN PROMPT?**
+- `--showcase` plays a scripted 44 second loop of every mood at 30 fps, made for filming the pump
+
+Needs the [Anton](https://fonts.google.com/specimen/Anton) font (OFL). `brrr_classic` is the plainer first version.
+
+## All displays
+
 Every display shows generation tokens/sec summed across all requests on all vLLM servers, total GPU watts, per GPU temperature and load. GPU 0's server is blue, GPU 1's is orange.
 
 | Reactor | Singularity | Synapse | Event Horizon |
@@ -26,6 +42,7 @@ Render + JPEG encode per frame on a Ryzen 9 9950X3D:
 | `singularity` (C) | ~2.4 ms | 24 | ~6% (estimated) |
 | `synapse` (C) | ~3.6 ms | 20 | ~16% |
 | `horizon` (C) | ~4.7 ms | 20 | ~10% |
+| `brrr` (C) | ~8.5 ms | 20 (30 in showcase) | ~17% (estimated) |
 | `reactor` (Python prototype) | ~12 ms | 12 | ~15% |
 
 The C versions use cairo, libjpeg-turbo and NVML. The Python version is the original prototype of `reactor` and is easier to hack on.
@@ -61,7 +78,7 @@ Needs `cairo`, `libjpeg-turbo`, NVML (`nvml.h` ships with the CUDA toolkit, `lib
 
 ```sh
 cd c
-make                     # builds all four; adjust -I/opt/cuda/include if nvml.h lives elsewhere
+make                     # builds every display; adjust -I/opt/cuda/include if nvml.h lives elsewhere
 ./synapse --bench        # render benchmark, writes a preview PNG, no device needed
 sudo ./synapse --demo    # simulated data on the real screen
 sudo ./synapse           # live
