@@ -244,7 +244,7 @@ The GIF above is a 4x time-lapse of about 70 seconds of `--demo`, so the whole m
 
 | On screen | Driven by |
 |---|---|
-| The child's expression, crossfading content, worried, sad, sobbing | a fading memory of recent tokens (about a minute); recovers when idle |
+| The child's expression: content, worried, sad, sobbing | a fading memory of recent tokens (about a minute); switches painting at 0.2 / 0.5 / 0.8 sadness with a quick half-second crossfade, and recovers when idle |
 | Room washing colder and darker | the child's mood |
 | Tears welling on the painted eye and running down the cheek | total tok/s: one tear per 26 tokens, up to 7 a second |
 | Robot's arm raising the glass to the jaw | tokens flowing; lowers when idle |
@@ -252,7 +252,7 @@ The GIF above is a 4x time-lapse of about 70 seconds of `--demo`, so the whole m
 | "mL of tears" counter | the same datacenter-equivalent estimate as `thirst` |
 | Bottom | total tok/s, total watts |
 
-The robot is mirrored so its arm socket faces the child; the arm, glass and tears are drawn in code so they can animate, lined up with the painted eye and jaw. About 2 ms per frame. The GIF is a 4x time-lapse of the demo. `make install` copies the assets next to the binary.
+The robot is mirrored so its arm socket faces the child; the arm, glass and tears are drawn in code so they can animate, lined up with the painted eye and jaw. About 2 ms per frame. `--showcase` plays a scripted 36 s story (content to sobbing, holding at the end); the GIF is that at 2x speed. `make install` copies the assets next to the binary.
 
 <br clear="right">
 

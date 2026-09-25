@@ -8,7 +8,8 @@
  * the painted eye down the cheek at the token rate, and the robot's arm raises a
  * glass to the jaw to catch them, slurping it dry when full.
  * The mL counter uses the same datacenter-water estimate as thirst (ML_PER_TOKEN).
- * Run with --demo to simulate data, --bench to write preview PNGs.
+ * Run with --demo to simulate data, --showcase for a scripted 36 s story that ends
+ * sobbing (for filming and GIFs), --bench to write preview PNGs.
  */
 #define _GNU_SOURCE
 #include <arpa/inet.h>
@@ -348,6 +349,11 @@ typedef struct { double x, y, vy, size, u, grow; int phase, alive; } tear;
 
 static tear   tears[MAX_TEARS];
 static double tear_acc, glass, recent, sadness, harvested_ml, arm_p, slurp_t = -1;
+/* Shown mood: one painting at a time, switching with a short crossfade */
+#define MOOD_FADE_S     0.5
+static const double mood_at[N_MOODS] = { 0.0, 0.2, 0.5, 0.8 };     /* sadness where each mood starts */
+static int    mood = 0, prev_mood = 0;
+static double mood_fade = 1;                                        /* 0 just switched .. 1 done */
 static cairo_surface_t *room_img, *robot_img, *child_img[N_MOODS], *hud_cache;
 static char hud_key[128];
 
@@ -412,13 +418,31 @@ static void load_assets(void)
 
 /* ---------------------------------------------------------------- simulation */
 
+static double scripted_sadness = -1;    /* set by --showcase: overrides the mood memory */
+
 static void simulate(const stats *s, double dt)
 {
     int idle = s->tok_s < 1 && s->running == 0;
 
     recent = recent * exp(-dt / SADNESS_TAU) + s->tok_s * dt;
-    sadness += (clamp01(recent / SADNESS_FULL) - sadness) * fmin(1, dt * 0.8);
+    if (scripted_sadness >= 0)
+        sadness = scripted_sadness;
+    else
+        sadness += (clamp01(recent / SADNESS_FULL) - sadness) * fmin(1, dt * 0.8);
     harvested_ml += s->tok_s * dt * ML_PER_TOKEN;
+
+    /* Switch paintings when sadness clearly crosses a mood boundary */
+    int want_mood = mood;
+    while (want_mood < N_MOODS - 1 && sadness >= mood_at[want_mood + 1] + 0.03)
+        want_mood++;
+    while (want_mood > 0 && sadness < mood_at[want_mood] - 0.03)
+        want_mood--;
+    if (want_mood != mood) {
+        prev_mood = mood;
+        mood = want_mood;
+        mood_fade = 0;
+    }
+    mood_fade = fmin(1, mood_fade + dt / MOOD_FADE_S);
 
     /* The arm raises the glass while tears flow, lowers it to slurp or when idle */
     if (slurp_t < 0 && glass >= 1 && arm_p > 0.95)
@@ -631,16 +655,16 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t)
     cairo_set_source_surface(cr, robot_img, ROBOT_X, ROBOT_Y);
     cairo_paint(cr);
 
-    /* The child: crossfade between the four painted moods */
-    double m = sadness * (N_MOODS - 1);
-    int a = (int)m;
-    if (a >= N_MOODS - 1)
-        a = N_MOODS - 2;
-    double f = clamp01(m - a);
-    cairo_set_source_surface(cr, child_img[a], CHILD_X, CHILD_Y);
-    cairo_paint_with_alpha(cr, 1 - f * f);          /* keep the outgoing face a bit longer */
-    cairo_set_source_surface(cr, child_img[a + 1], CHILD_X, CHILD_Y);
-    cairo_paint_with_alpha(cr, f);
+    /* The child: one painted mood at a time, with a quick crossfade when it changes */
+    if (mood_fade < 1) {
+        cairo_set_source_surface(cr, child_img[prev_mood], CHILD_X, CHILD_Y);
+        cairo_paint(cr);
+        cairo_set_source_surface(cr, child_img[mood], CHILD_X, CHILD_Y);
+        cairo_paint_with_alpha(cr, smooth(mood_fade));
+    } else {
+        cairo_set_source_surface(cr, child_img[mood], CHILD_X, CHILD_Y);
+        cairo_paint(cr);
+    }
 
     for (int i = 0; i < MAX_TEARS; i++)
         if (tears[i].alive)
@@ -680,6 +704,38 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t)
     cairo_paint(cr);
 }
 
+/* ---------------------------------------------------------------- showcase */
+
+/*
+ * --showcase: a scripted 36 s story for filming or GIFs. The mood would take minutes of
+ * sustained load to go all the way; here it is driven directly: content, then steadily
+ * sadder under rising load, ending on sobbing and holding there.
+ */
+#define SHOWCASE_LEN    36.0
+
+static void showcase_poll(stats *s, double t)
+{
+    double lt = fmod(t, SHOWCASE_LEN), tok, sad;
+    if (lt < 4) {
+        tok = 180;
+        sad = 0;
+    } else if (lt < 28) {
+        double u = (lt - 4) / 24;
+        tok = 250 + 1450 * u;
+        sad = u * u * (3 - 2 * u);
+    } else {
+        tok = 1750;
+        sad = 1;
+    }
+    scripted_sadness = sad;
+    s->tok_port[0] = tok * 0.46;
+    s->tok_port[1] = tok * 0.54;
+    s->tok_s = tok;
+    s->running = 4;
+    s->power[0] = 30 + fmin(545, tok * 0.28);
+    s->power[1] = 35 + fmin(540, tok * 0.29);
+}
+
 /* ---------------------------------------------------------------- main */
 
 int main(int argc, char **argv)
@@ -691,11 +747,13 @@ int main(int argc, char **argv)
     stats s = { 0 };
     shown_t sh = { 0 };
     double last, next_poll = 0, t0;
-    int fd = -1, bench = 0;
+    int fd = -1, bench = 0, showcase = 0;
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--demo"))
             demo = 1;
+        else if (!strcmp(argv[i], "--showcase"))
+            showcase = demo = 1;
         else if (!strcmp(argv[i], "--bench"))
             bench = 1;
     }
@@ -723,6 +781,8 @@ int main(int argc, char **argv)
             memset(tears, 0, sizeof(tears));
             recent = sadness = glass = harvested_ml = arm_p = 0;
             slurp_t = -1;
+            mood = prev_mood = 0;
+            mood_fade = 1;
             s.tok_port[0] = scenes[k].tok * 0.45; s.tok_port[1] = scenes[k].tok * 0.55;
             s.tok_s = scenes[k].tok; s.running = 4;
             s.power[0] = 25 + scenes[k].tok * 0.28; s.power[1] = 30 + scenes[k].tok * 0.28;
@@ -761,7 +821,9 @@ int main(int argc, char **argv)
         if (dt > 0.25)
             dt = 0.25;
 
-        if (t >= next_poll) {
+        if (showcase) {
+            showcase_poll(&s, t - t0);
+        } else if (t >= next_poll) {
             next_poll = t + 1.0;
             if (demo) {
                 /* scale a copy each second; scaling s itself would compound */
