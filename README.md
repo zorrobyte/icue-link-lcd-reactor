@@ -23,7 +23,7 @@ Built for a dual RTX 5090 box running two vLLM servers (one per GPU), but the GP
 <tr>
 <td align="center"><img src="docs/gif/koi.gif" width="240"><br><b>koi</b></td>
 <td align="center"><img src="docs/gif/tears.gif" width="240"><br><b>tears</b></td>
-<td></td>
+<td align="center"><img src="docs/gif/tears2.gif" width="240"><br><b>tears2</b></td>
 </tr>
 </table>
 
@@ -32,7 +32,7 @@ The GIFs are recorded from each display's `--demo` mode (simulated data), `brrr`
 ## Contents
 
 - [Quick start](#quick-start)
-- [Displays](#displays): [brrr](#brrr) · [horizon](#horizon) · [plasma](#plasma) · [fishbowl](#fishbowl) · [autumn](#autumn) · [thirst](#thirst) · [tears](#tears) · [koi](#koi) · [singularity](#singularity) · [synapse](#synapse) · [reactor](#reactor)
+- [Displays](#displays): [brrr](#brrr) · [horizon](#horizon) · [plasma](#plasma) · [fishbowl](#fishbowl) · [autumn](#autumn) · [thirst](#thirst) · [tears](#tears) · [koi](#koi) · [tears2](#tears2) · [singularity](#singularity) · [synapse](#synapse) · [reactor](#reactor)
 - [Configuration](#configuration)
 - [Command line and environment](#command-line-and-environment)
 - [Performance](#performance)
@@ -236,6 +236,28 @@ The GIF above is a 4x time-lapse of about 70 seconds of `--demo`, so the whole m
 
 ---
 
+### tears2
+
+<img src="docs/tears2.png" width="480" align="right">
+
+`tears`, repainted with generated art. The bedroom, the GPU robot and the child are images made with an image model (via the Codex CLI) and live in `c/assets/tears2/`. The child was generated once and then re-generated from that image as a reference in four matching moods (content, worried, sad, sobbing), so the display can crossfade between them.
+
+| On screen | Driven by |
+|---|---|
+| The child's expression, crossfading content, worried, sad, sobbing | a fading memory of recent tokens (about a minute); recovers when idle |
+| Room washing colder and darker | the child's mood |
+| Tears welling on the painted eye and running down the cheek | total tok/s: one tear per 26 tokens, up to 7 a second |
+| Robot's arm raising the glass to the jaw | tokens flowing; lowers when idle |
+| Glass pulled back and slurped, "SLURP" | the glass is full (22 caught tears) |
+| "mL of tears" counter | the same datacenter-equivalent estimate as `thirst` |
+| Bottom | total tok/s, total watts |
+
+The robot is mirrored so its arm socket faces the child; the arm, glass and tears are drawn in code so they can animate, lined up with the painted eye and jaw. About 2 ms per frame. The GIF is a 4x time-lapse of the demo. `make install` copies the assets next to the binary.
+
+<br clear="right">
+
+---
+
 ### koi
 
 <img src="docs/koi.png" width="480" align="right">
@@ -367,6 +389,7 @@ Render + JPEG encode per frame under heavy load on a Ryzen 9 9950X3D, from `--be
 | `thirst` | ~0.7 ms | 20 / 8 |
 | `tears` | ~2 ms | 20 / 8 |
 | `koi` | ~3 ms | 20 / 10 |
+| `tears2` | ~2 ms | 20 / 8 |
 | `fishbowl` | ~2.1 ms | 24 / 12 |
 | `singularity` | ~2.1 ms | 24 / 8 |
 | `brrr` | ~2.3 ms | 20 / 8 (30 in showcase) |
