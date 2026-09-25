@@ -33,16 +33,31 @@ Built for a dual RTX 5090 box running two vLLM servers (one per GPU), but the GP
 <tr>
 <td align="center"><img src="docs/gif/lantern.gif" width="240"><br><b>lantern</b></td>
 <td align="center"><img src="docs/gif/lathe.gif" width="240"><br><b>lathe</b></td>
-<td></td>
+<td align="center"><img src="docs/gif/skyline.gif" width="240"><br><b>skyline</b></td>
+</tr>
+<tr>
+<td align="center"><img src="docs/gif/xray.gif" width="240"><br><b>xray</b></td>
+<td align="center"><img src="docs/gif/station.gif" width="240"><br><b>station</b></td>
+<td align="center"><img src="docs/gif/hamsters.gif" width="240"><br><b>hamsters</b></td>
+</tr>
+<tr>
+<td align="center"><img src="docs/gif/weather.gif" width="240"><br><b>weather</b></td>
+<td align="center"><img src="docs/gif/antfarm.gif" width="240"><br><b>antfarm</b></td>
+<td align="center"><img src="docs/gif/therapy.gif" width="240"><br><b>therapy</b></td>
+</tr>
+<tr>
+<td align="center"><img src="docs/gif/toaster.gif" width="240"><br><b>toaster</b></td>
+<td align="center"><img src="docs/gif/knit.gif" width="240"><br><b>knit</b></td>
+<td align="center"><img src="docs/gif/shrine.gif" width="240"><br><b>shrine</b></td>
 </tr>
 </table>
 
-The GIFs are recorded from each display's `--demo` mode (simulated data), `brrr` from its `--showcase` loop.
+The GIFs are recorded from each display's `--demo` or `--showcase` mode (simulated data). The last ten (`skyline` to `shrine`) read the whole machine, not just the GPUs: CPU threads, temperatures, RAM, NVMe, network, pressure stalls, forks and more.
 
 ## Contents
 
 - [Quick start](#quick-start)
-- [Displays](#displays): [brrr](#brrr) · [horizon](#horizon) · [plasma](#plasma) · [fishbowl](#fishbowl) · [autumn](#autumn) · [thirst](#thirst) · [tears](#tears) · [koi](#koi) · [tears2](#tears2) · [kombat](#kombat) · [butwait](#butwait) · [brickout](#brickout) · [lantern](#lantern) · [lathe](#lathe) · [singularity](#singularity) · [synapse](#synapse) · [reactor](#reactor)
+- [Displays](#displays): [brrr](#brrr) · [horizon](#horizon) · [plasma](#plasma) · [fishbowl](#fishbowl) · [autumn](#autumn) · [thirst](#thirst) · [tears](#tears) · [koi](#koi) · [tears2](#tears2) · [kombat](#kombat) · [butwait](#butwait) · [brickout](#brickout) · [lantern](#lantern) · [lathe](#lathe) · [skyline](#skyline) · [xray](#xray) · [station](#station) · [hamsters](#hamsters) · [weather](#weather) · [antfarm](#antfarm) · [therapy](#therapy) · [toaster](#toaster) · [knit](#knit) · [shrine](#shrine) · [singularity](#singularity) · [synapse](#synapse) · [reactor](#reactor)
 - [Configuration](#configuration)
 - [Command line and environment](#command-line-and-environment)
 - [Performance](#performance)
@@ -76,6 +91,8 @@ To switch displays, change `ExecStart=` in the unit to another binary in `/opt/l
 ## Displays
 
 Every display reads the same live data: generation tokens/sec per vLLM server and in total, running requests per server, and per-GPU load, power and temperature. Unless noted, GPU 0 (and its server) is blue and GPU 1 is orange.
+
+The system displays (`skyline`, `xray`, `station`, `hamsters`, `weather`, `antfarm`, `therapy`, `toaster`, `knit`, `shrine`) also read the rest of the machine from `/proc` and `/sys`, so they stay alive with vLLM stopped. See [Data sources](#data-sources).
 
 ---
 
@@ -420,6 +437,334 @@ The groove is cut into a persistent surface a few short strokes per frame, and t
 
 ---
 
+### skyline
+
+<img src="docs/skyline.png" width="480" align="right">
+
+A city at night, drawn from the whole machine's sensors instead of just vLLM. Every CPU thread is a building whose windows light up with its load. Trains carry the NVMe traffic, cars the network, and the sky turns from deep night blue to smoggy orange as the CPU heats up. It looks alive with vLLM stopped.
+
+| On screen | Driven by |
+|---|---|
+| Lit windows in the front row of 16 buildings | load of CPU threads 0-15 (the physical cores), one building each; windows come on in a fixed shuffled order, so the lit fraction is the load |
+| Lit windows in the taller back row | load of threads 16-31 (the SMT siblings) |
+| Neon along each roof | that thread's clock (`scaling_cur_freq`): deep blue when parked, teal, **hot pink at full boost** (5.5+ GHz) |
+| Sky colour, from night blue through violet to **smoggy orange-red**; stars fade in the smog | CPU temperature (k10temp Tctl, 40 to 92 °C) |
+| Glow over the city | CPU package watts (RAPL, needs root; without it, estimated from CPU load) |
+| Moon phase, "RAM %" under it | RAM in use (MemTotal minus MemAvailable) |
+| Left and right power plants: tower glow, steam volume | GPU 0 (blue) and GPU 1 (orange) power draw |
+| How fast the steam rises | each GPU's fan speed |
+| White headlights heading left | download on `enp12s0` + `tailscale0`, more and faster cars as it climbs (log scale, 20 KB/s to 600 MB/s) |
+| Red taillights heading right | upload, same scale |
+| Amber taxis joining the traffic | new processes (forks per second) |
+| Traffic signals cycling | context switches per second: slow at idle, flicking over during a build |
+| Cyan trains heading left on the far track | NVMe reads (all drives): longer, faster and closer together with throughput (2 MB/s to 7 GB/s) |
+| Lime trains heading right on the near track | NVMe writes |
+| Radio waves from the mast | open TCP connections (`/proc/net/sockstat`) |
+| Searchlights sweeping the sky | vLLM tokens/sec, when a server is generating (GPU activity with `--gpu-load`) |
+| Reflections in the water, street lamps, aviation lights | the lit windows and the plants, plus purely visual |
+| Text on the water | average CPU load, then CPU temperature and total GPU watts |
+
+Everything is drawn with cairo, no image assets. The skyline is generated from a fixed seed; silhouettes, window grids, the road, the viaduct and the plants are cached at startup, and each frame draws only the lit windows (batched into a handful of fills), neon, steam, traffic and trains. The sky is rebuilt only when the temperature or CPU power has visibly moved, the reflections 10 times a second, the text 4 times a second with hysteresis. System sensors are read twice a second from `/proc` and `/sys` (hwmon devices found by name); the reader is a self-contained `sys_stats` block at the top of `c/skyline.c`. About 1.4 ms per frame flat out, 0.7 ms asleep; 3.7% of one core measured live with both GPUs busy. 20 fps, 15 when the city is asleep. `--showcase` plays a scripted 36 s night (a sleeping city, a download and a model load, a big build with the GPUs flat out, then back to sleep); the GIF is 29 s of it.
+
+<br clear="right">
+
+---
+
+### xray
+
+<img src="docs/xray.png" width="480" align="right">
+
+A glowing holographic body scan of an android, driven by the machine's own vital signs rather than by vLLM: it looks alive with the servers stopped. The CPU is the heart, RAM fills the lungs, the disks digest, the network is the blood and the two GPUs are the brain. As the CPU heats up, the whole scan shifts from cool cyan through lavender and rose to a feverish red.
+
+| On screen | Driven by |
+|---|---|
+| Heart beat rate (52 to 170 bpm), size and glow | total CPU load, from `/proc/stat` |
+| Ring of 32 ticks around the heart | each hardware thread's load |
+| Colour of the whole scan, smouldering rim when above ~85 °C, right rim gauge, big number | CPU temperature (k10temp Tctl) |
+| Lungs filling from the bottom, the level line, big number at the bottom | RAM in use (MemTotal − MemAvailable) |
+| Breathing faster and deeper | pressure stall: the highest PSI "some avg10" of cpu, memory and io |
+| Stomach churning and glowing | NVMe reads (`/proc/diskstats`, all three drives) |
+| Streaks flowing down the gut | NVMe writes |
+| Blood running in along the veins to the heart | network download on `enp12s0` |
+| Blood pumped out along the arteries | network upload |
+| Left and right halves of the brain lighting up and sparking | GPU 0 and GPU 1 activity (utilisation and power, as in GPU load mode); vLLM tokens add sparks when running |
+| Pulses climbing / falling along the spinal cord | PCIe traffic host to GPU / GPU to host (NVML, both cards) |
+| Nerve twitches running out along the ribs | page faults per second; major faults twitch hard (`/proc/vmstat`) |
+| Small blips on the ECG between heartbeats | interrupts per second |
+| ECG trace | the heartbeat itself |
+| Left rim gauge, big number | CPU % |
+| Text bent along the top of the rim | the patient's age (uptime), and CPU package watts from RAPL (root only; without it, the 1-minute load average) |
+| Scan line sweeping down the body | always, purely visual |
+
+The skeleton is an image made with an image model (via the Codex CLI) in `c/assets/xray/`; everything else is drawn with cairo. The bones, lung outlines, vessels, nerves, brain folds and bezel are one static alpha mask that is painted through the fever tint each frame, so the colour shift costs nothing. Rates are shown on a log scale so a trickle of traffic still shows. System sensors are polled twice a second (NVML's PCIe counters take ~25 ms each, so one is read per poll), and all sensor reading lives in a reusable `sys_stats` block at the top of `c/xray.c`. About 2.9 ms per frame at full tilt (5.4% of one core measured over the whole showcase), 1.5 ms idle; 20 fps, 15 when the machine is resting. `--showcase` plays a scripted 36 s arc from a sleeping machine to a full fever and back (the GIF is 20 s of it).
+
+<br clear="right">
+
+---
+
+### station
+
+<img src="docs/station.png" width="480" align="right">
+
+A space station slowly turning above a planet. The whole machine is on the ring: every CPU thread is a habitat module, RAM is a cargo bay, the NVMe drives are docking ports and the two GPUs are the reactor cores on the spindle. It's driven by the system's own sensors, so it's alive with vLLM stopped.
+
+| On screen | Driven by |
+|---|---|
+| 32 habitat modules on the ring: skylight and windows go from a dim nightlight to warm, then white-hot | per-thread CPU load (`/proc/stat`, cpu0 to cpu31) |
+| Coolant puffs venting off the modules, drifting out along the spin | CPU temperature (k10temp Tctl), from 66 °C, heavier toward 95 °C |
+| Containers lowered into the cargo bay (42 slots, about 2.2 GB each), faint outlined slots after them | RAM used (MemTotal minus MemAvailable), then page cache |
+| Three docking ports: shuttles leave (cyan trail) and arrive (amber trail), cyan and amber lights on each arm | reads and writes per drive (nvme0n1, nvme1n1, nvme2n1, `/proc/diskstats`), rate on a log scale |
+| Steam from a dock | that drive's temperature, from 44 °C |
+| Packets on the beam between the mast-head dish and the relay satellite: cyan coming down, amber going up | network receive and transmit (enp12s0 + tailscale0) |
+| Upper reactor core (**blue**) and lower core (**orange**): glow, size of the halo, a lens streak when hot | each GPU's power draw (NVML) |
+| Sparks orbiting in each core's containment ring, how fast the core breathes | each GPU's utilisation |
+| Radiator panels on each core, folded at rest and unfolding, their stripes glowing | GPU fan % (unfolding) and GPU temperature (stripes) |
+| Solar wings on the mast, how brightly they light up, energy running in along the truss | CPU package watts (RAPL); estimated from load when not readable |
+| Escape capsules shooting off the modules | new processes per second (forks, `processes` in `/proc/stat`) |
+| Visiting ships parked in a holding orbit around the station | open TCP connections, one ship per 3 |
+| Red strobes on the spoke junctions, red dock beacons, the cargo bay lights turning red | pressure stall info (`/proc/pressure` "some avg10") for CPU, I/O and memory |
+| **CPU PRESSURE 12%** (or I/O, MEMORY) under the clock | the worst of those three, shown from 10% (hidden again below 7%) |
+| **DAY 12 · 07:21** at the top | uptime, as mission day and time |
+| Text at the bottom, 7 s per page: CPU % and temp (and package watts if readable); GPU watts and temps (blue, orange); network and disk throughput; RAM, open TCP connections and forks/s | the same sensors |
+
+The planet and starfield are a painting made with an image model (via the Codex CLI) in `c/assets/station/`; the station is drawn with cairo from a tilted orthographic 3D model. The ring, hub and mast are symmetric, so they are cached layers, and the modules, containers and ships are pre-rendered at every degree of rotation and blitted at their exact positions, so only moving things cost anything: about 2.3 ms per frame with everything busy, 1.4 ms quiet, and 5% of one core live with both GPUs at full power. Sensors are read twice a second; every value is eased and every number has hysteresis. 20 fps, 15 when idle. `--showcase` plays a scripted 36 s arc at 24 fps: a quiet station, the CPU wakes up, RAM fills, disks and network join, both reactors run flat out, two short pressure alarms, then it all winds down (the GIF is 25 s of it). Without root the RAPL file can't be read; the solar wings then follow CPU load and the watts are left off the text. `ROT_PERIOD`, `FPS_BUSY` and `FPS_IDLE` are in `c/station.c`, the drive and network names at the top of its system sensors block.
+
+<br clear="right">
+
+---
+
+### hamsters
+
+<img src="docs/hamsters.png" width="480" align="right">
+
+The funny one. Your computer is secretly powered by hamsters: a cutaway of the hamster power plant under your desk. Driven by system sensors (/proc, hwmon) and NVML, so it's alive with vLLM stopped.
+
+| On screen | Driven by |
+|---|---|
+| 16 hamsters on two shelves of wheels | one per CPU core (both SMT threads averaged): each runs as fast as its core is busy |
+| Hamster curls up for a nap, zzz | its core idle (below 5% for 3 s; wakes with a "!" above 12%) |
+| Red faces, sweat flying | CPU temperature (Tctl) from about 60 °C, worse for the hamsters running hardest |
+| Two neighbours hop out and swap wheels | context switches/s (from ~30k/s, up to 2.5 swaps a second) |
+| Baby hamsters scurrying along the shelves | new processes (forks) per second |
+| A hamster loses its footing and loops the loop, seeing stars | major page faults/s (from 50/s) |
+| Gold "RPM" gauge on the left rim, **GHz** | average CPU clock over all threads |
+| Hamster-power gauge on the right rim, **⚡ W** | CPU package watts (RAPL; needs root, shown as "~" and estimated from load and clock otherwise) |
+| **°C** at the top | CPU temperature |
+| Two big chonks in hard hats on giant wheels, blue and orange | GPU 0 and GPU 1: wheel speed from GPU activity (half utilisation, half power), asleep when idle |
+| Sparks off the giant wheels, coloured glow | GPU power, sparks from 300 W |
+| Chonk sweats and flushes | GPU temperature |
+| **W** under each giant wheel | GPU power |
+| Seeds in the food bowl, **GB** on it | RAM: the bowl drains as memory fills; the number is RAM used |
+| Caretaker in an apron pouring seeds into the bowl | memory being freed |
+| Hamsters with stuffed cheeks carrying seeds into a burrow | NVMe writes (one burrow per drive: nvme0, nvme1, nvme2) |
+| Hamsters popping out of a burrow spitting seeds | NVMe reads |
+| Warm light inside a burrow | that drive's throughput |
+| Hamster on the red phone: blue rings closing in / orange rings going out | network download / upload (enp12s0 + tailscale0) |
+| Ceiling lamp brightness | how hard the whole plant is working |
+
+All the hamsters, the chonks, the caretaker, the phone hamster and the burrow painting were generated with an image model (via the Codex CLI) and live in `c/assets/hamsters/`; wheels, bowl, burrow doors, gauges and effects are cairo. Wheel rims, spokes and rungs are pre-rendered at 16 angles and blitted, glows are cached sprites, and the text layer only redraws when a number changes (4 times a second at most): about 1.5 to 2 ms per frame flat out, 0.6 ms asleep; measured 3.8% of one core live and 4.4% in `--showcase`. 24 fps, 15 when everyone's asleep. `--showcase` plays a scripted 36 s arc (everyone asleep, a download, a build, both GPUs flat out with the bowl nearly empty, the caretaker refilling it, back to sleep); the GIF is 26 s of it. `--sensors` prints what the system sensors read and exits. Sensor polling is at 2 Hz in a reusable `sys_stats` block (it also reads interrupts, PSI, DIMM, NVMe and board temperatures).
+
+<br clear="right">
+
+---
+
+### weather
+
+<img src="docs/weather.png" width="480" align="right">
+
+Machine weather. A small planet seen from orbit turns slowly in the dark, and its weather is your machine's state. Idle, it's a calm blue world with a few wisps of cloud. Push the box and storms spin up, lightning breaks over the continents, meteors streak in, both poles light up with aurora, and the oceans go from blue to amber. Driven by system sensors, so it looks alive with vLLM stopped.
+
+| On screen | Driven by |
+|---|---|
+| Climate: ice caps shrink, oceans go deep blue → turquoise → jade → amber, deserts spread, clouds turn dusty | CPU temperature (k10temp Tctl), **42 °C coldest, 95 °C hottest** |
+| Cloud cover (8% to 52% of the sky) | total CPU load |
+| Storm cells (spinning cyclones), up to 8 | the busiest CPU threads, one storm per thread above **30%** load |
+| How dense and opaque the clouds are | RAM in use (1 − MemAvailable / MemTotal) |
+| Thunderheads and lightning over three continents | NVMe read + write, one continent per drive (nvme0n1, nvme1n1, nvme2n1), from 1 MB/s to 3 GB/s |
+| Lightning inside the storm cells | interrupts per second (/proc/stat `intr`) |
+| Jet-stream streaks: cyan blowing west, gold blowing east | enp12s0 download (in) and upload (out), 10 kB/s to 100 MB/s; more, faster and longer streaks with more traffic |
+| How fast the clouds drift and the storms spin | average CPU clock (scaling_cur_freq over all threads) |
+| Meteors burning up in the atmosphere | major page faults per second (/proc/vmstat `pgmajfault`) |
+| Green aurora at the north pole | GPU 0 power (activity in GPU mode, or vLLM tok/s if serving) |
+| Rose-and-gold aurora at the south pole | GPU 1 power (same) |
+| The sun's glare, top left | CPU package watts from RAPL (root only; estimated from CPU load otherwise) |
+| "986 hPa LOW" | pressure stall: 1022 hPa minus 0.9 × the worst of CPU, IO and memory PSI `some avg10` (%); HIGH at 1016 and up, LOW at 1006 and below |
+| "DAY 13" | uptime in days |
+| "62°C  STORMY" | CPU temperature, and a forecast: CLEAR, FAIR, CLOUDY, WINDY, RAIN, THUNDER, STORMY, SEVERE or HEATWAVE |
+
+Everything is procedural, no image assets: the planet's height map, three continents, moisture, ice and two cloud layers are generated from 3D noise at start-up (about 0.6 s), and the globe is drawn per pixel from a precomputed lookup with bilinear sampling along longitude, so the slow turn (one revolution every 90 s) stays smooth. The surface is repainted only when the climate moves a step (64 steps from cold to hot). Auroras are soft curtains of rays standing on the horizon above each pole, fading out at their feet, tops and both ends, drawn as one cairo mesh pattern per pole; the stars and the atmosphere's glow are cached, and the text is redrawn at most 4 times a second, with hysteresis on every number and a forecast word that must be wrong for 2 s before it changes. The system sensors are polled twice a second in a reusable `sys_stats` block at the top of `c/weather.c`. About 2.2 ms per frame when busy, 2.7 ms with everything maxed, 1.5 ms idle: 20 fps (about 4.5% of one core), 15 when calm. `--showcase` plays a scripted 36 s arc from a calm, cold planet to a maxed-out machine and back (the GIF is the whole loop). Thresholds (`TEMP_COOL`, `TEMP_HOT`, `STORM_MIN_LOAD`, `DAY_S`) are at the top of the planet section.
+
+<br clear="right">
+
+---
+
+### antfarm
+
+<img src="docs/antfarm.png" width="480" align="right">
+
+A backlit cross-section of a round glass ant farm on a wooden stand. The colony is the whole machine rather than just the GPUs: the workers, the food store, the drives, the network and the queen each have a job, so it still looks busy and makes sense with vLLM stopped.
+
+| On screen | Driven by |
+|---|---|
+| Worker ants walking the tunnels: how many and how fast | total CPU load (about 4 ants idle, up to about 55 at 100%) |
+| 16 brood cells off the tunnel walls, glowing, with 0 to 2 ants busy inside | per-core load (both SMT threads); left half of the colony is CCD0 (cores 0-7), right half is CCD1 (8-15) |
+| Seed pile in the big food store | RAM used (MemTotal - MemAvailable); **pale crumbs** on top are page cache |
+| Ants carrying seeds between the store and the deep cellar at the bottom, cellar glow | swap: carried down for swap-out, up for swap-in (zram pages/s) |
+| Three drive chambers: amber crumbs carried down, pale crumbs carried up, chamber glow | each NVMe drive's write and read throughput (`/proc/diskstats`) |
+| Ants bringing leaves in from the edges of the glass / walking out | `enp12s0` receive / transmit |
+| Burrows dug along the surface (0 to 14) | open TCP connections (`/proc/net/sockstat`), log scale: about 7 burrows at 90 connections, all 14 at 1000 |
+| Queen's chamber pulse and her attendants | GPU activity (utilisation and power, both GPUs), or vLLM tok/s when it is running |
+| Eggs laid by the queen that hatch into workers | new processes per second (forks, from `/proc/stat`) |
+| Blue and amber fungus nurseries glowing, larvae wriggling | GPU 0 and GPU 1 power |
+| Traffic jams: ants stall and queue up in the tunnels | pressure stall information (`/proc/pressure`): CPU PSI for workers, IO PSI for drive haulers |
+| Soil and tunnel light warming from brown to ember red | CPU temperature (k10temp Tctl, 45 to 92 °C) |
+| Ants scurrying and fanning their antennae | CPU over 86 °C (and off again below 82) |
+| Plaque on the stand, "4,526 ants" | every task on the machine (`/proc/loadavg`) |
+| Text in the sky | RAM used (GB), CPU %, CPU temperature |
+
+Everything is drawn with cairo, no image assets. The colony is a graph of tunnels resampled every 2 px: ants walk along it at sub-pixel positions, their drawn position and heading are eased so they never jump or flip, and they turn round on the spot when they load up or reverse. New ants fade in where they hatch or enter and fade out where they rest, and surface ants walk in and out from beyond the glass. Ant sprites are pre-rendered at 64 headings, 4 leg phases and 2 antenna poses and blitted unrotated. The soil is painted twice at startup (cool and hot) and blended into a cached background only when the temperature tint moves a step; the seed pile is redrawn only when RAM changes, and the text and plaque are cached (4 and 1 updates a second at most, with hysteresis). About 1.7 ms per frame with ~90 ants and everything maxed, 1.1 ms idle; measured 3% of one core running live and 5% at the showcase peak. 20 fps, 15 when idle. System sensors are polled twice a second in a self-contained `sys_stats` block at the top of `c/antfarm.c`; `ANTFARM_DEBUG=1` prints them. `--showcase` plays a scripted 36 s arc from a quiet colony to everything maxed and back (the GIF is 32 s of it). `TEMP_COOL`/`TEMP_HOT`, `TEMP_FRANTIC`, `NET_FULL`, `DISK_FULL`, `SWAP_FULL`, `FORK_FULL`, `PSI_FULL` and `worker_target()` are in `c/antfarm.c`.
+
+<br clear="right">
+
+---
+
+### therapy
+
+<img src="docs/therapy.png" width="480" align="right">
+
+The funny one. Your GPU is lying on a therapist's couch, talking about its feelings, while a rubber duck in glasses listens from the armchair and takes notes. What it complains about comes from the whole machine, not just the GPUs, and the room shows the same readings. The room, both characters (three GPU poses, two duck poses) and the props were made with an image model (via the Codex CLI) and live in `c/assets/therapy/`.
+
+| On screen | Driven by |
+|---|---|
+| What the GPU says (two short lines, changes at most every 6 s) | the loudest problem right now, picked with hysteresis: heat, pressure stall, RAM, page faults/swap, network, disk, GPU work, CPU load, context switches, or nothing at all |
+| **"is it hot in here or is it just my VRM?"**, "I'm fine. it's only 94°C in here" | CPU temp (k10temp Tctl) from 88 °C, GPU temp from 82 °C, or both GPUs over 1000 W |
+| **"I'm under a lot of pressure"** | PSI: `/proc/pressure/{cpu,io,memory}` "some avg10" from 20% |
+| **"I can't hold all these feelings"**, "81 GB of emotional baggage" | RAM used from 85% (`/proc/meminfo`) |
+| "I keep forgetting things", "some memories are repressed. in swap." | major page faults from 400/s, or swapping (`/proc/vmstat`) |
+| **"everyone's talking about me"**, "212 people are talking to me right now" | network from 30 MB/s (`enp12s0`, `tailscale0`); the number is open TCP connections (`/proc/net/sockstat`) |
+| "I keep reliving old files", "I've started journaling. 2.4 GB a second" | NVMe reads + writes from 400 MB/s (`/proc/diskstats`) |
+| **"they just keep asking for more tokens"**, "I haven't slept in 12 days" | tok/s (or GPU activity in GPU mode); the days are the real uptime |
+| "the CPU gets all the attention", "32 threads and not one of them calls me" | CPU over 50% while the GPU sits idle |
+| "I can't focus on one thing" | context switches from 200k/s (`/proc/stat`) |
+| **"nobody needs me."**, "up for 9 days and not one prompt" | nothing else going on |
+| The duck's replies ("and how does that make you feel?", "have you tried saying 429?", "tell me about your motherboard.") | about every other line, a reply about the same topic or a classic |
+| GPU pose: sulking, explaining, panicking | the topic (idle / talking / heat, pressure, RAM, network), or panic once anxiety passes 82% |
+| Sweat drops, trembling, red flush, worry lines, heat wiggles | anxiety: half GPU power (both cards), half CPU temperature |
+| The GPU's three fans spinning | real GPU fan speed (NVML, the faster card) |
+| The duck scribbling, torn-off pages fluttering to the floor | CPU load (the duck is the CPU): a page per 1.3 s flat out, one every 25 s idle |
+| Stack of luggage in front of the couch (1 to 5 pieces, each drops in) | RAM used: all five from about 86% |
+| Phone on the side table ringing (rattle and ring lines, in bursts) | network traffic, faster bursts the more there is |
+| Papers flying out of / into the filing cabinet, drawer rattle | NVMe reads (out) and writes (in) |
+| Pressure gauge on the wall | PSI, the worst of CPU, IO and memory; 40% pegs it in the red |
+| Thermometer on the wall | CPU temperature, 30 to 100 °C |
+| Wall clock | the real time, with a ticking second hand |
+| Notepad at the bottom | total tok/s (or GPU %) |
+
+`--showcase` plays a scripted 48 second session, one mood every 6 s: sulking, jealous of the CPU, asked for tokens, reliving old files, flooded with calls, buried in baggage, overheating, then back to sulking. Thresholds are in `update_topics()` and all the lines are tables near the top of the scene code in `c/therapy.c`, easy to add to. Uses Fira Sans (falls back to any sans). About 0.6 to 1 ms per frame including the JPEG, 24 fps busy, 15 idle (about 3% of one core). `make install` copies the assets next to the binary, where `therapy` looks for them (it also finds them in `./assets/therapy` when run from `c/`).
+
+<br clear="right">
+
+---
+
+### toaster
+
+<img src="docs/toaster.png" width="480" align="right">
+
+A retro kitchen counter run by the whole machine. The two chrome toasters are the GPUs (sky blue is GPU 0, tangerine is GPU 1). Toast pops out and flies onto the plates, and it comes out paler or darker with GPU temperature. Everything else in the kitchen is the rest of the box.
+
+| On screen | Driven by |
+|---|---|
+| Toast popping out of the sky-blue toaster onto its plate | GPU 0's server tok/s (GPU 0 activity in GPU mode). **Two slices a pop, up to 1.8 pops a second**, the rate rising with the square root of the load |
+| Toast popping out of the tangerine toaster | GPU 1's server tok/s, same rate |
+| Orange glow in the slots, warm haze over the toaster | that GPU's power draw |
+| How done the toast is: pale bread, light, golden, brown, dark, burnt | that GPU's temperature, 32 °C to 80 °C, with hysteresis so the colour never flickers between two levels |
+| Smoke from the slots, burnt slices and piles | toast at the two darkest levels |
+| Smoke alarm flashing, sound rings, "BEEP!" | the hottest GPU at 80 °C or more (it stops below 76 °C) |
+| A bagel or a waffle instead of toast (about 1 pop in 6), some slices missing the plate | that GPU above 85% of full rate |
+| Piles toppling off the counter | a pile reaching 20 slices, or 2.5 s of idle |
+| Seven-segment number on the kitchen timer | total tok/s (average GPU % in GPU mode) |
+| 32 blue flames on the gas ring under the kettle | CPU load of each hardware thread (/proc/stat) |
+| Steam from the kettle's spout | total CPU load |
+| Kettle whistling (sound arcs, a jet of steam, the kettle shaking) | CPU temperature (k10temp Tctl), from 78 °C, full at 86 °C |
+| Kettle lid rattling and puffing | CPU pressure stalls (/proc/pressure/cpu "some avg10") |
+| Cookies in the jar | RAM in use (MemTotal minus MemAvailable) |
+| Microwave light and turntable | NVMe throughput, read and write, all three drives (log scale up to 3 GB/s) |
+| Popcorn popping in the microwave, then a "ding" and a fresh bag | new processes per second (forks, /proc/stat) |
+| Gold notes from the radio, its dial lighting up and needle swinging | LAN traffic on enp12s0 (log scale) |
+| Violet notes from the radio | tailscale0 traffic |
+| Extractor fan spinning | the two GPUs' fan speeds |
+| Red mark going round the electricity meter's disc | total watts: CPU package plus both GPUs |
+| Text on the cabinet door | total kW (CPU package plus both GPUs), CPU temperature, RAM in use |
+| Cold toasters, one slice of bread on the plate, a fly buzzing about | idle: no tokens and no running requests (no GPU activity in GPU mode) |
+
+The kitchen and every object in it (toasters, toast, bagel, waffle, kettle, gas ring, jar, cookie, microwave, radio, timer, smoke alarm, extractor fan, electricity meter, shelf and plates) are images made with an image model (via the Codex CLI) in `c/assets/toaster/`. The six doneness levels are made at start-up from the one toast image, so every slice has the same shape and crumb. CPU package power comes from RAPL (`/sys/class/powercap/intel-rapl:0/energy_uj`), which only root can read; otherwise it is estimated from CPU load. Everything that never moves is drawn once into a static layer, piles and the cookie jar are cached and redrawn only when they change, steam and smoke puffs are pre-rendered at every radius and blitted unscaled, and the timer and cabinet text are redrawn only when a number changes (4 times a second at most): about 1.8 ms per frame flat out, 0.7 ms idle, and 2.5 to 3.6% of one core live. 24 fps, 15 when idle. `--showcase` plays a scripted 36 s breakfast rush (the GIF is 30 s of it). `MAX_POPS_PER_S`, `PILE_MAX`, `ALARM_ON_C`, `FPS_BUSY` and `FPS_IDLE` are in `c/toaster.c`.
+
+<br clear="right">
+
+---
+
+### knit
+
+<img src="docs/knit.png" width="480" align="right">
+
+Grandma in her rocking chair, knitting an impossibly long scarf by the fire. Every generated token is a stitch: the scarf pours off her lap, coils across the rug and runs out of frame, striped in the colours of the two GPUs' yarn. The whole house is the machine.
+
+| On screen | Driven by |
+|---|---|
+| How fast the scarf spills off her lap, how fast her needles click | total tok/s (GPU activity in GPU mode) |
+| Blue stripes / orange stripes | GPU 0's / GPU 1's share of the tokens: each stripe is knitted from whichever GPU's yarn is owed the most rows |
+| Stripe width (3 to 14 rows) | context switches per second (`/proc/stat` ctxt): a busy scheduler makes her change yarn more often |
+| Each yarn ball's size | that GPU's **free VRAM** (NVML): the ball shrinks as memory fills |
+| Yarn balls rolling, strands tugging to the needles | that GPU's share of the knitting |
+| Yarn colour warming (blue to plum, orange to red) and the glow around each ball | that GPU's temperature; the stripes keep the colour they were knitted in |
+| A ladder running down the scarf, a loop of yarn falling | a dropped stitch: bursts of **major page faults** (`/proc/vmstat` pgmajfault, one per 6000, at most every 4 s) |
+| The fire in the grate and its glow on the room | CPU temperature (k10temp Tctl, 40 to 90 °C) |
+| Steam from the teapot on the hearth, the lid rattling above 80% | CPU load (`/proc/stat`, all 32 threads) |
+| Balls of yarn in the basket (0 to 9) | RAM in use (`/proc/meminfo`) |
+| Music notes from the radio, its dial glowing | network traffic: gold notes for `enp12s0`, blue for `tailscale0` |
+| The cat: short calm hops up to frantic pouncing, batting the yarn balls | NVMe throughput (`/proc/diskstats`, nvme0n1 to nvme2n1) |
+| Wall calendar "DAY n" | uptime (`/proc/uptime`) |
+| Cross-stitch sampler | total tok/s (or `% GPU`), and stitches knitted since the display started (one per token; in GPU mode, per token-equivalent) |
+| Grandma dozing (zzz), sampler reading "ZZZ / NAPPING", the cat curled up asleep on the scarf | idle: no tokens and no running requests for 3 s (the cat also waits for the disks to go quiet) |
+
+The room, grandma (awake and dozing), the cat (three poses), teapot, radio, basket and yarn ball were made with an image model (via the Codex CLI) and live in `c/assets/knit/`; the sampler numbers, scarf, fire, steam, notes and yarn are drawn live. The scarf is drawn in two layers, her lap (rocks with the chair) and the rug (still): each frame only fills the flat yarn colours, and the knitted texture is pre-rendered for 8 sub-row positions and laid over them, so the stitches scroll with the yarn cheaply. Grandma is cached per rocking angle, the flames are pre-scaled soft sprites, the fire's glow on the room is baked when the fire changes size, and the sampler is redrawn from cached stitched glyphs at most 4 times a second: about 1.8 ms per frame flat out, 1.3 ms idle; 24 fps, 15 when she and the cat are both asleep. Measured live at about 4.4% of one core. `--showcase` plays a scripted 36 s evening (the GIF is 26 s of it). `SCROLL_MAX`, `MAJF_PER_DROP`, `DOZE_AFTER`, `FPS_BUSY` and `FPS_IDLE` are in `c/knit.c`.
+
+<br clear="right">
+
+---
+
+### shrine
+
+<img src="docs/shrine.png" width="480" align="right">
+
+A tiny cult worships your graphics cards. Hooded acolytes kneel in a ritual circle around the monolith, a graphics card standing on end on a stone altar like the one in *2001*, and bow in time with your tokens. The rest of the machine joins the service too: candles, braziers, a gong, a prayer bell, carrier pigeons and the odd undead acolyte.
+
+| On screen | Driven by |
+|---|---|
+| Acolytes bowing: slow, in-step bows when it's quiet, a ragged arms-in-the-air frenzy at the top | tok/s (GPU activity % in GPU mode) |
+| Glowing runes rising from the acolytes into the monolith | tok/s, **one rune per 40 tokens** (up to 12 a second) |
+| Number of acolytes (4 to 8; they walk in from the edge and wander off again) | overall machine load: GPU activity, CPU load, NVMe and network traffic |
+| Left and right brazier flames, sparks at high power | GPU 0 and GPU 1 power draw |
+| The monolith's three fans spinning | average GPU fan % |
+| Monolith glowing red, an acolyte hurrying in to fan it with a palm leaf, "it is too hot" | hottest of GPU temperature (50 to 84 °C) and CPU temperature (k10temp, 55 to 92 °C) |
+| 32 candles around the circle, flame height per candle | CPU load of each of the 32 threads (`/proc/stat`) |
+| Offering bowl heaped with gold | RAM in use (`/proc/meminfo`) |
+| Gong struck, rings rippling out (faster and brighter with more traffic) | NVMe read + write throughput (`/proc/diskstats`, log scale) |
+| Carrier pigeons flying in from the left into the monolith / out of it to the right | network received / sent on enp12s0 + tailscale0 (`/proc/net/dev`, log scale) |
+| Prayer bell swinging and chiming | interrupts per second (`/proc/stat` intr, log scale) |
+| Runes flaring on the carved rim of the circle | processes forked per second ("initiates") |
+| Incense smoke from the two censers | the kernel's entropy pool (`entropy_avail`); on recent kernels it sits at 256, so the incense burns steadily |
+| Pale green undead acolytes shambling around the back (up to 3) | zombie processes (state Z in `/proc/<pid>/stat`, counted every 5 s) |
+| One acolyte sweeping, the rest asleep (zzz), "the faithful sleep" | idle: no tokens, no running requests, CPU under 12% |
+| Caption at the top: quiet devotion, evening chant, high mass, RAPTURE | chant intensity, with hysteresis |
+| Stone tablet | the big number is tok/s (or % GPU); the line under it cycles every 3 s through GPU watts and temperature, CPU % and temperature, RAM, gong (disk) and doves (network) throughput, bells (interrupts/s), souls (total tasks, `/proc/loadavg`), initiates (forks/s), undead (when there are any) and the vigil (uptime) |
+
+The acolyte (12 poses), the monolith, braziers, gong, bell, censer, bowl, candle, pigeon, stone tablet and temple floor were made with an image model (via the Codex CLI) in `c/assets/shrine/`. Flames, glows, runes, smoke and text are drawn with cairo. The acolyte poses are pre-scaled at ten depths in both facings. Acolytes only turn round when they start walking the other way, and pose changes cross-fade. Most sprites are blitted at whole-pixel positions, so pixman stays on its fast path, and the tablet text is redrawn only when it changes (4 times a second at most): about 1.2 ms per frame busy and 0.8 ms idle, which comes to about 3.4% of one core in GPU mode on live data. 20 fps, 15 when idle. `--showcase` plays a scripted 40 s service: night, the candles wake, GPU 0 lights its brazier, GPU 1 joins, a frenzy, overheating with palm-leaf fanning, then winding down (the GIF is the first 25 s). `FPS_BUSY`, `FPS_IDLE`, `MAX_ACO` and `ACO_MIN` are in `c/shrine.c`.
+
+<br clear="right">
+
+---
+
 ### singularity
 
 <img src="docs/singularity.png" width="480" align="right">
@@ -508,7 +853,7 @@ Everything is a constant at the top of each `c/*.c` file:
 |---|---|---|
 | *(none)* | all | live data, drives the pump |
 | `--demo` | all | simulated data cycling from idle to heavy load; no GPUs or vLLM needed |
-| `--showcase` | brrr | scripted 44 s loop of every mood at 30 fps |
+| `--showcase` | brrr, kombat, tears2, butwait, brickout, lantern, lathe and the ten system displays | scripted loop of every mood, made for filming (brrr: 44 s at 30 fps) |
 | `--bench` | all | renders a few scenes off screen, prints ms/frame, writes preview PNGs |
 | `--gpu-load` | all | drive the display from GPU load and power instead of vLLM tokens/sec (see [GPU load mode](#gpu-load-mode)) |
 | `LCD_DUMP_DIR=/path` | all | writes every frame to `/path/frame_NNNNN.jpg` instead of the pump; used to make the GIFs above |
@@ -562,6 +907,16 @@ Render + JPEG encode per frame under heavy load on a Ryzen 9 9950X3D, from `--be
 | `plasma` | ~3.2 ms | 24 / 15 |
 | `synapse` | ~3.7 ms | 20 / 15 |
 | `horizon` | ~4.4 ms | 20 / 15 |
+| `skyline` | ~1.4 ms | 20 / 15 |
+| `xray` | ~2.9 ms | 20 / 15 |
+| `station` | ~2.3 ms | 20 / 15 (24 in showcase) |
+| `hamsters` | ~2 ms | 24 / 15 |
+| `weather` | ~2.2 ms (2.7 maxed) | 20 / 15 |
+| `antfarm` | ~1.7 ms | 20 / 15 |
+| `therapy` | ~1 ms | 24 / 15 |
+| `toaster` | ~1.8 ms | 24 / 15 |
+| `knit` | ~1.8 ms | 24 / 15 |
+| `shrine` | ~1.2 ms | 20 / 15 |
 
 At 20 fps, 2.5 ms per frame is about 5% of one core; `autumn` measured 4.3% live with both servers busy.
 
@@ -603,6 +958,7 @@ Protocol details come from [OpenLinkHub](https://github.com/jurkovic-nikola/Open
 | Running requests | `vllm:num_requests_running` per server |
 | GPU activity (GPU load mode) | NVML utilisation and power, blended 50/50, in place of the two above |
 | Streamed text (`horizon` only) | libpcap on `lo`, responses from the vLLM ports |
+| System sensors (system displays) | `/proc/stat` (per-thread load, context switches, interrupts, forks), `/proc/meminfo`, `/proc/loadavg`, `/proc/pressure/*` (PSI), `/proc/vmstat` (page faults, swap), `/proc/diskstats` (NVMe), `/proc/net/dev`, `/proc/net/sockstat` (TCP connections), `/proc/uptime`, cpufreq, hwmon by name (`k10temp`, `nvme`, `spd5118`), RAPL CPU package power (root only, estimated otherwise), NVML fan, clocks, VRAM and PCIe throughput |
 
 Watts are **GPU board power only**; CPU, motherboard and PSU losses are not included, so a wall meter will read higher.
 
