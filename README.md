@@ -20,6 +20,10 @@ Needs the [Anton](https://fonts.google.com/specimen/Anton) font (OFL). `brrr_cla
 
 <p align="center"><img src="docs/plasma.png" width="640" alt="plasma: busy, one request, idle"></p>
 
+## Fishbowl
+
+<p align="center"><img src="docs/fishbowl.png" width="640" alt="fishbowl: busy, some requests, idle"></p>
+
 ## All displays
 
 Every display shows generation tokens/sec summed across all requests on all vLLM servers, total GPU watts, per GPU temperature and load. GPU 0's server is blue, GPU 1's is orange.
@@ -33,6 +37,7 @@ Every display shows generation tokens/sec summed across all requests on all vLLM
 - `singularity`: one particle per token, streams per server form spiral arms, trails, photon ring
 - `synapse`: fixed three layer network, one signal per two tokens, neurons flash as signals pass, core flashes on arrival
 - `plasma`: a plasma globe with one filament per busy request slot (`--max-num-seqs`) on each server. Filaments roam and swirl around the globe, faster with throughput, and push apart like a real plasma ball. Busy slots crackle and carry token pulses at the real rate, free slots are hidden, and the counter shows busy/total slots per GPU. Set `SLOTS_PER_SERVER` to match your servers
+- `fishbowl`: every busy request slot is a fish (blue tangs for GPU 0's server, goldfish for GPU 1's) swimming faster with tokens/sec and blowing bubbles at the real token rate. Light rays, caustics, seaweed, a bubbler and a very slow snail
 - `horizon`: passively captures streamed text from the vLLM servers on loopback (libpcap) and drops a legible subset in as words; the rest of the token flow becomes accretion dust. Lensed starfield, spaghettification, gravitational redshift. Nothing is stored or sent anywhere. Needs root or CAP_NET_RAW.
 
 Built for a dual RTX 5090 box running two vLLM servers, but the GPU bus IDs and vLLM ports are constants at the top of each source file.
@@ -49,6 +54,7 @@ Render + JPEG encode per frame on a Ryzen 9 9950X3D:
 | `horizon` (C) | ~4.7 ms | 20 | ~10% |
 | `brrr` (C) | ~8.5 ms | 20 (30 in showcase) | ~17% (estimated) |
 | `plasma` (C) | ~3 to 6 ms | 24 | ~10% (estimated) |
+| `fishbowl` (C) | ~2 to 5.5 ms | 24 | ~10% (estimated) |
 | `reactor` (Python prototype) | ~12 ms | 12 | ~15% |
 
 The C versions use cairo, libjpeg-turbo and NVML. The Python version is the original prototype of `reactor` and is easier to hack on.
