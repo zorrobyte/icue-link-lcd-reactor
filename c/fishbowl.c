@@ -2,7 +2,8 @@
  * fishbowl: your LLM servers as a fishbowl on the iCUE LINK AIO pump LCD.
  *
  * Every busy request slot is a fish: blue tangs for the ZOTAC's vLLM server, orange
- * goldfish for the TUF's. They swim faster with their server's tokens/sec and blow
+ * goldfish for the TUF's. A fish swims in from off screen when a request starts and
+ * swims out when it finishes. They swim faster with their server's tokens/sec and blow
  * bubbles at its real token rate. Light rays, caustics, swaying seaweed, a bubbler
  * and a very slow snail. Idle, the bowl is empty apart from the snail.
  * Run with --demo to simulate data, --bench to write preview PNGs.
@@ -299,10 +300,13 @@ typedef struct {
     double x, y, heading, speed;    /* heading in radians, speed px/s */
     double turn;                    /* current turn rate */
     double tail;                    /* tail wag phase */
-    double life;                    /* 0..1 fade in/out */
     double size;
+    double exit_x;                  /* where it's heading when leaving */
     int    src, busy;
+    int    state;                   /* FISH_GONE, FISH_IN (swimming in or around), FISH_LEAVING */
 } fish;
+
+enum { FISH_GONE, FISH_IN, FISH_LEAVING };
 
 typedef struct { double x, y, r, wob, vy; int alive; } bubble;
 
@@ -357,39 +361,54 @@ static void simulate(const stats *s, double dt, double t)
     for (int i = 0; i < N_SLOTS; i++) {
         fish *f = &fishes[i];
         int k = i % SLOTS_PER_SERVER;
-        int was = f->busy;
         f->busy = k < s->running_port[f->src];
-        if (f->busy && !was && f->life < 0.05) {
-            /* A new request swims in from the side */
+
+        if (f->busy && f->state == FISH_GONE) {
+            /* A new request swims in from off screen */
             int left = frand() < 0.5;
-            f->x = left ? c - 175 : c + 175;
-            f->y = 140 + frand() * 180;
-            f->heading = left ? (frand() - 0.5) * 0.6 : M_PI + (frand() - 0.5) * 0.6;
+            f->x = left ? -30 : SIZE + 30;
+            f->y = 150 + frand() * 170;
+            f->heading = left ? (frand() - 0.5) * 0.4 : M_PI + (frand() - 0.5) * 0.4;
             f->turn = 0;
+            f->speed = 90;
+            f->state = FISH_IN;
+        } else if (f->busy && f->state == FISH_LEAVING) {
+            f->state = FISH_IN;                         /* new request on this slot: come back */
+        } else if (!f->busy && f->state == FISH_IN) {
+            f->state = FISH_LEAVING;                    /* request finished: swim out the nearer side */
+            f->exit_x = f->x < c ? -80 : SIZE + 80;
         }
-        f->life += ((f->busy ? 1 : 0) - f->life) * fmin(1, dt * 2.5);
-        if (f->life < 0.01)
+        if (f->state == FISH_GONE)
             continue;
 
         /* Speed from this server's throughput shared across its busy slots */
         int busy_here = s->running_port[f->src] > 0 ? s->running_port[f->src] : 1;
         double per_slot = s->tok_port[f->src] / busy_here;
-        double want_speed = 35 + fmin(per_slot, 700) * 0.22;
+        double want_speed = f->state == FISH_LEAVING ? 120 : 35 + fmin(per_slot, 700) * 0.22;
         f->speed += (want_speed - f->speed) * fmin(1, dt * 1.5);
         f->tail += dt * (4 + f->speed * 0.12);
 
-        /* Wander, then steer back inside the bowl and above the sand */
+        double dx = f->x - c, dy = f->y - c, r = hypot(dx, dy);
         f->turn += (frand() - 0.5) * 3.0 * dt;
         f->turn *= exp(-dt * 1.2);
-        double dx = f->x - c, dy = f->y - c, r = hypot(dx, dy);
-        if (r > SWIM_R - 30 || f->y > SAND_Y - 40 || f->y < SURFACE_Y + 45) {
+
+        if (f->state == FISH_LEAVING) {
+            /* Head for the exit, then vanish once well off screen */
+            double to_exit = atan2(-10, f->exit_x - f->x);      /* slightly upward toward the exit side */
+            f->turn += remainder(to_exit - f->heading, 2 * M_PI) * 3.0 * dt;
+            if (f->x < -60 || f->x > SIZE + 60) {
+                f->state = FISH_GONE;
+                continue;
+            }
+        } else if (r > SWIM_R - 30 || f->y > SAND_Y - 40 || f->y < SURFACE_Y + 45) {
+            /* Steer back inside the bowl (also brings new fish in from the edge) */
             double to_center = atan2(c + 10 - f->y, c - f->x);
             double diff = remainder(to_center - f->heading, 2 * M_PI);
-            f->turn += diff * 2.5 * dt;
+            f->turn += diff * (r > SWIM_R ? 6.0 : 2.5) * dt;
         }
         /* Keep a little distance from other fish */
         for (int j = 0; j < N_SLOTS; j++) {
-            if (j == i || fishes[j].life < 0.05)
+            if (j == i || fishes[j].state == FISH_GONE)
                 continue;
             double ex = f->x - fishes[j].x, ey = f->y - fishes[j].y, d = hypot(ex, ey);
             if (d < 50 && d > 0.1) {
@@ -410,7 +429,8 @@ static void simulate(const stats *s, double dt, double t)
     for (int src = 0; src < 2; src++) {
         int n = 0, idx[N_SLOTS];
         for (int i = 0; i < N_SLOTS; i++)
-            if (fishes[i].src == src && fishes[i].busy && fishes[i].life > 0.5)
+            if (fishes[i].src == src && fishes[i].state == FISH_IN &&
+                hypot(fishes[i].x - c, fishes[i].y - c) < SWIM_R)
                 idx[n++] = i;
         bub_acc[src] += (n ? s->tok_port[src] / TOKENS_PER_BUBBLE : 0) * dt;
         while (bub_acc[src] >= 1) {
@@ -536,7 +556,7 @@ static void draw_fish(cairo_t *cr, const fish *f)
     cairo_restore(cr);
 
     cairo_pop_group_to_source(cr);
-    cairo_paint_with_alpha(cr, f->life);
+    cairo_paint(cr);
     cairo_restore(cr);
 }
 
@@ -688,7 +708,7 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t)
     draw_snail(cr, snail_x, t);
 
     for (int i = 0; i < N_SLOTS; i++)
-        if (fishes[i].life > 0.01)
+        if (fishes[i].state != FISH_GONE)
             draw_fish(cr, &fishes[i]);
 
     /* Bubbles */
