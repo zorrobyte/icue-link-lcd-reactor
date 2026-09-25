@@ -1,27 +1,34 @@
 # iCUE LINK LCD Reactor
 
-A live LLM dashboard for the round LCD on Corsair iCUE LINK AIO pumps (TITAN / H-series LCD cap), on Linux. No iCUE, no OpenLinkHub, it talks to the screen directly.
+Live LLM dashboards for the round LCD on Corsair iCUE LINK AIO pumps (TITAN / H-series LCD cap), on Linux. No iCUE, no OpenLinkHub, it talks to the screen directly.
 
-<p align="center">
-  <img src="docs/preview.png" width="320" alt="Under load">
-  <img src="docs/idle.png" width="320" alt="Idle">
-</p>
+Every display shows generation tokens/sec summed across all requests on all vLLM servers, total GPU watts, per GPU temperature and load. GPU 0's server is blue, GPU 1's is orange.
 
-- **Outer ring:** GPU load, left half for GPU 0 (blue), right half for GPU 1 (orange)
-- **Reactor core:** segments spin faster with load, and the glow shifts from cyan to amber to red as power draw rises
-- **Center:** generation tokens/sec summed across vLLM servers, total GPU watts, per GPU temperature, running requests
-- Shows **IDLE** with a slow cool spin when nothing is generating
+| Reactor | Singularity | Synapse | Event Horizon |
+|---|---|---|---|
+| <img src="docs/preview.png" width="200"> | <img src="docs/singularity.png" width="200"> | <img src="docs/synapse.png" width="200"> | <img src="docs/horizon.png" width="200"> |
+| Load ring and a spinning reactor core that heats up with power draw | Every generated token is a particle spiralling into a black hole | Tokens fire signals through a glowing neural network into the core | Your model's **actual output words** fall in, stretching and redshifting at the horizon |
+
+- `reactor`: outer ring is GPU load, core segments spin faster with load, glow shifts cyan to amber to red with power
+- `singularity`: one particle per token, streams per server form spiral arms, trails, photon ring
+- `synapse`: fixed three layer network, one signal per two tokens, neurons flash as signals pass, core flashes on arrival
+- `horizon`: passively captures streamed text from the vLLM servers on loopback (libpcap) and drops a legible subset in as words; the rest of the token flow becomes accretion dust. Lensed starfield, spaghettification, gravitational redshift. Nothing is stored or sent anywhere. Needs root or CAP_NET_RAW.
 
 Built for a dual RTX 5090 box running two vLLM servers, but the GPU bus IDs and vLLM ports are constants at the top of each source file.
 
-## Versions
+## Performance
 
-| | Render + encode per frame | CPU at 12 fps |
-|---|---|---|
-| `c/` (cairo + libjpeg-turbo + NVML) | ~1.7 ms | ~2% of a core |
-| `python/` (Pillow + nvidia-smi) | ~12 ms | ~15% of a core |
+Render + JPEG encode per frame on a Ryzen 9 9950X3D:
 
-Both produce the same image. The C version is the one to run; the Python version is the prototype and is easier to hack on.
+| Display | Per frame | FPS | CPU |
+|---|---|---|---|
+| `reactor` (C) | ~1.7 ms | 12 | ~2% of a core |
+| `singularity` (C) | ~2.4 ms | 24 | ~6% (estimated) |
+| `synapse` (C) | ~3.6 ms | 20 | ~16% |
+| `horizon` (C) | ~4.7 ms | 20 | ~10% |
+| `reactor` (Python prototype) | ~12 ms | 12 | ~15% |
+
+The C versions use cairo, libjpeg-turbo and NVML. The Python version is the original prototype of `reactor` and is easier to hack on.
 
 ## How the screen works
 
@@ -50,17 +57,17 @@ Protocol details come from [OpenLinkHub](https://github.com/jurkovic-nikola/Open
 
 ## Build and run (C)
 
-Needs `cairo`, `libjpeg-turbo`, and NVML (`nvml.h` ships with the CUDA toolkit, `libnvidia-ml.so` with the driver).
+Needs `cairo`, `libjpeg-turbo`, NVML (`nvml.h` ships with the CUDA toolkit, `libnvidia-ml.so` with the driver), and `libpcap` for `horizon`.
 
 ```sh
 cd c
-make                 # adjust -I/opt/cuda/include in the Makefile if nvml.h lives elsewhere
-./reactor --bench    # render benchmark, writes reactor_c_preview.png, no device needed
-sudo ./reactor --demo   # simulated data on the real screen
-sudo ./reactor          # live
+make                     # builds all four; adjust -I/opt/cuda/include if nvml.h lives elsewhere
+./synapse --bench        # render benchmark, writes a preview PNG, no device needed
+sudo ./synapse --demo    # simulated data on the real screen
+sudo ./synapse           # live
 ```
 
-Install as a service:
+Install as a service (edit `ExecStart` to pick the display):
 
 ```sh
 sudo make install

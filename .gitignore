@@ -1,4 +1,7 @@
 reactor
-reactor_c_preview.png
+singularity
+synapse
+horizon
+*_preview.png
 __pycache__/
 *.pyc
