@@ -17,8 +17,8 @@ Built for a dual RTX 5090 box running two vLLM servers (one per GPU), but the GP
 </tr>
 <tr>
 <td align="center"><img src="docs/gif/autumn.gif" width="240"><br><b>autumn</b></td>
+<td align="center"><img src="docs/gif/thirst.gif" width="240"><br><b>thirst</b></td>
 <td align="center"><img src="docs/gif/reactor.gif" width="240"><br><b>reactor</b></td>
-<td></td>
 </tr>
 </table>
 
@@ -27,7 +27,7 @@ The GIFs are recorded from each display's `--demo` mode (simulated data), `brrr`
 ## Contents
 
 - [Quick start](#quick-start)
-- [Displays](#displays): [brrr](#brrr) · [horizon](#horizon) · [plasma](#plasma) · [fishbowl](#fishbowl) · [autumn](#autumn) · [singularity](#singularity) · [synapse](#synapse) · [reactor](#reactor)
+- [Displays](#displays): [brrr](#brrr) · [horizon](#horizon) · [plasma](#plasma) · [fishbowl](#fishbowl) · [autumn](#autumn) · [thirst](#thirst) · [singularity](#singularity) · [synapse](#synapse) · [reactor](#reactor)
 - [Configuration](#configuration)
 - [Command line and environment](#command-line-and-environment)
 - [Performance](#performance)
@@ -183,6 +183,30 @@ The sky, sun, hills and branches never change, so they are drawn once at startup
 
 ---
 
+### thirst
+
+<img src="docs/thirst.png" width="480" align="right">
+
+Two GPUs chase kids to steal their water. A satire of AI datacenters' water use.
+
+| On screen | Driven by |
+|---|---|
+| Blue GPU chasing | GPU 0's server: its speed is set by that server's tok/s |
+| Orange GPU chasing | GPU 1's server, same |
+| Kids getting away | low tok/s: the kids (72 px/s) outrun slow GPUs |
+| GPU catches a kid, "SLURP" | the cup is drained; the kid walks to the well to refill, then gets a short head start |
+| GPU napping by the datacenter | its server is idle |
+| Water tower level | drains with tokens (3 L full), slowly refills when idle |
+| Server lights blinking | fast while generating |
+| Litres counter | **datacenter-equivalent** water for the tokens generated since the display started |
+| Bottom | total tok/s, total watts |
+
+The litres figure is an estimate, not a measurement. It uses Li et al. 2023, [*Making AI Less Thirsty*](https://arxiv.org/abs/2304.03271), which puts GPT-3 at roughly 500 mL of water per 10 to 50 medium-length responses; with 30 responses of about 300 tokens that is about 0.056 mL per token (`ML_PER_TOKEN` in `c/thirst.c`). A home rig with a closed liquid loop like this one uses no water at all, which is rather the point. Cached background, 20 fps busy, 8 idle, well under 1 ms per frame.
+
+<br clear="right">
+
+---
+
 ### singularity
 
 <img src="docs/singularity.png" width="480" align="right">
@@ -290,6 +314,7 @@ Render + JPEG encode per frame under heavy load on a Ryzen 9 9950X3D, from `--be
 |---|---|---|
 | `autumn` | ~2.5 ms | 20 / 6 |
 | `reactor` | ~1.7 ms | 12 / 6 |
+| `thirst` | ~0.7 ms | 20 / 8 |
 | `fishbowl` | ~2.1 ms | 24 / 12 |
 | `singularity` | ~2.1 ms | 24 / 8 |
 | `brrr` | ~2.3 ms | 20 / 8 (30 in showcase) |
