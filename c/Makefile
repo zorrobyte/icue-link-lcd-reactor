@@ -2,11 +2,11 @@ CFLAGS  ?= -O2 -march=native -Wall -Wextra
 CFLAGS  += $(shell pkg-config --cflags cairo libturbojpeg) -I/opt/cuda/include
 LDLIBS  += $(shell pkg-config --libs cairo libturbojpeg) -lnvidia-ml -lm
 
-DISPLAYS = reactor singularity synapse horizon brrr plasma fishbowl autumn thirst tears koi tears2
+DISPLAYS = reactor singularity synapse horizon brrr plasma fishbowl autumn thirst tears koi tears2 kombat butwait brickout lantern lathe
 
 all: $(DISPLAYS)
 
-reactor singularity synapse brrr plasma fishbowl autumn thirst tears koi tears2: %: %.c
+reactor singularity synapse brrr plasma fishbowl autumn thirst tears koi tears2 kombat butwait brickout lantern lathe: %: %.c
 	$(CC) $(CFLAGS) -o $@ $< $(LDLIBS)
 
 horizon: horizon.c

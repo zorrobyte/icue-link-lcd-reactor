@@ -25,6 +25,16 @@ Built for a dual RTX 5090 box running two vLLM servers (one per GPU), but the GP
 <td align="center"><img src="docs/gif/tears.gif" width="240"><br><b>tears</b></td>
 <td align="center"><img src="docs/gif/tears2.gif" width="240"><br><b>tears2</b></td>
 </tr>
+<tr>
+<td align="center"><img src="docs/gif/kombat.gif" width="240"><br><b>kombat</b></td>
+<td align="center"><img src="docs/gif/butwait.gif" width="240"><br><b>butwait</b></td>
+<td align="center"><img src="docs/gif/brickout.gif" width="240"><br><b>brickout</b></td>
+</tr>
+<tr>
+<td align="center"><img src="docs/gif/lantern.gif" width="240"><br><b>lantern</b></td>
+<td align="center"><img src="docs/gif/lathe.gif" width="240"><br><b>lathe</b></td>
+<td></td>
+</tr>
 </table>
 
 The GIFs are recorded from each display's `--demo` mode (simulated data), `brrr` from its `--showcase` loop.
@@ -32,7 +42,7 @@ The GIFs are recorded from each display's `--demo` mode (simulated data), `brrr`
 ## Contents
 
 - [Quick start](#quick-start)
-- [Displays](#displays): [brrr](#brrr) · [horizon](#horizon) · [plasma](#plasma) · [fishbowl](#fishbowl) · [autumn](#autumn) · [thirst](#thirst) · [tears](#tears) · [koi](#koi) · [tears2](#tears2) · [singularity](#singularity) · [synapse](#synapse) · [reactor](#reactor)
+- [Displays](#displays): [brrr](#brrr) · [horizon](#horizon) · [plasma](#plasma) · [fishbowl](#fishbowl) · [autumn](#autumn) · [thirst](#thirst) · [tears](#tears) · [koi](#koi) · [tears2](#tears2) · [kombat](#kombat) · [butwait](#butwait) · [brickout](#brickout) · [lantern](#lantern) · [lathe](#lathe) · [singularity](#singularity) · [synapse](#synapse) · [reactor](#reactor)
 - [Configuration](#configuration)
 - [Command line and environment](#command-line-and-environment)
 - [Performance](#performance)
@@ -277,6 +287,137 @@ The sprites are top-down, so they rotate cleanly; to make them swim instead of s
 
 <br clear="right">
 
+### kombat
+
+<img src="docs/kombat.png" width="480" align="right">
+
+GPU FIGHTER II TURBO HYPER INFERENCE EDITION. Your two graphics cards are 16-bit arcade fighters on a datacenter rooftop. They have fans for eyes, a PCIe gold-finger grin, a red headband and a 12VHPWR cable for a ponytail. Every token is an attack.
+
+| On screen | Driven by |
+|---|---|
+| Fireballs thrown | that GPU's server tok/s, **one fireball per 32 tokens** (up to 7/sec; past that the arms blur) |
+| Fireballs clashing mid-air, or landing with POW! / BAM! / YEET! | both servers busy, or only one |
+| Fighter asleep (Zzz) and getting beaten up anyway | its server is idle while the other one works |
+| Beam instead of fireballs | from **300 tok/s** per server |
+| **BEAM STRUGGLE**: where the beams meet | the faster server pushes the clash point toward the slower one |
+| Super Saiyan hair and aura | from **600 tok/s** per server |
+| Stage shakes, rocks float up | from **1200 tok/s** total |
+| Lightning, **ULTRA COMBO!!!** | past **2000 tok/s** total |
+| **IT'S OVER 900 WATTS!!!**, watts flash red | total GPU power over 900 W |
+| 12VHPWR plug on the fighter's head smokes | that card over 480 W |
+| **TOASTY!** llama pops in from the corner | a GPU at **72 °C** or more (at most every 40 s) |
+| Bars at the top | per-server tok/s (full at 1000, gold when maxed) |
+| Round timer | total tok/s |
+| "N HITS", **C-C-C-COMBO BREAKER!** | hits landed in a row; breaking a 15+ hit streak |
+| **ROUND n / FIGHT!** | a new burst of requests after a quiet spell |
+| **K.O.!**, then **ZOTAC WINS** / **TUF WINS** / **DOUBLE K.O.** with the round's token counts; FLAWLESS VICTORY if the loser made none | 2 seconds with no tokens ends the round; whichever server generated more tokens that round wins. The winner fist-pumps and the loser sees stars |
+| **INSERT PROMPT**, both asleep | no tokens and no running requests |
+| Bottom | GPU 0 temp, total watts, GPU 1 temp, running requests as CREDITS |
+
+`--showcase` plays a scripted 44 second fight at 30 fps: asleep, ROUND n, ZOTAC slapping a sleeping TUF, fireballs, beam struggle, both going Super Saiyan, ultra, 900 W, TOASTY, K.O. and the winner. The GIF is this loop at 2x speed.
+
+The stage and the llama were made with an image model (`c/assets/kombat/`); the fighters, beams and effects are drawn with cairo. The HUD is cached and redrawn at most 4 times a second. About 3 ms per frame at full chaos, 1.4 ms idle; 20 fps busy, 8 when everyone is asleep. Needs the Anton font. Thresholds are `TOK_PER_FIREBALL`, `BEAM_TOK`, `SUPER_TOK`, `SHAKE_TOK`, `ULTRA_TOK`, `OVER_W`, `SMOKE_W` and `TOASTY_C` in `c/kombat.c`.
+
+<br clear="right">
+
+---
+
+### butwait
+
+<img src="docs/butwait.png" width="480" align="right">
+
+A strawberry is asked "how many r's in STRAWBERRY?" and overthinks it at your real tokens/sec. The faster your GPUs go, the harder it spirals and the more wrong the answer gets.
+
+| On screen | Driven by |
+|---|---|
+| Words of its `<think>` stream sliding out from behind it | tok/s, **one word per 120 tokens** (up to 9 words/sec): GPU 0's server to the left in blue, GPU 1's to the right in orange |
+| Calm "Hmm. Let me count.", eyes up, **ANSWER: 3?** | under 400 tok/s |
+| "Wait," "But wait," "Actually,", one sweat drop, **ANSWER: 3? 2?** | from **400 tok/s** |
+| "BUT WAIT" "HOLD ON" "RECOUNT", grimace, shaking, sweat flying, **ANSWER: 2** | from **900 tok/s** |
+| Meltdown: spiral eyes, steam, red glow, "AAAAA" "is r a vowel", **ANSWER: 2 (100%)** | from **1500 tok/s** |
+| `</think>`, a **FINAL ANSWER** stamp, then a big **"Wait,"** and it starts over | every 13 s while busy |
+| "thought for 48.2M tokens" | the real total of generated tokens reported by your vLLM servers since they started |
+| Asleep, Z's, **ANSWER: 3 ✓** (it's only right when it isn't thinking) | no tokens and no running requests |
+| Numbers | total tok/s in the middle, GPU 0 (blue) and GPU 1 (orange) tok/s either side, total watts and GPU temps at the bottom |
+
+Stages change with hysteresis and at most once a second, and the shaking and red glow ease in, so nothing flickers. `--showcase` plays a scripted 42 second loop: asleep, a prompt arrives, FINAL ANSWER: 3, each stage in turn, a meltdown with FINAL ANSWER: 2, back to sleep.
+
+The background, question, every word of the vocabulary, the stamp and the glow are rendered once and cached; the HUD is only redrawn when its text changes (4 times a second). About 1.2 ms per frame in a full meltdown. 20 fps, 8 when asleep. The strawberry is a PNG in `c/assets/butwait/`, installed next to the binary; its face is drawn in cairo. `TOKENS_PER_WORD`, `WAIT_TOK`, `PANIC_TOK`, `MELT_TOK` and `STAMP_EVERY` are in `c/butwait.c`.
+
+<br clear="right">
+
+---
+
+### brickout
+
+<img src="docs/brickout.png" width="480" align="right">
+
+A self-playing round brick-breaker. The whole screen is the playfield: a pixel-art picture built from bricks sits in the middle, and your two GPUs play it with curved paddles that run around the rim.
+
+| On screen | Driven by |
+|---|---|
+| **Blue** paddle (left half) and blue balls | GPU 0's server: **one ball in play per 170 tok/s** (up to 6), faster balls as its tok/s rises |
+| **Orange** paddle (right half) and orange balls | GPU 1's server, same rules |
+| Paddle speed | that GPU's load |
+| Paddle glow | that GPU's power draw |
+| Marquee bulbs chasing round the bezel | total tok/s |
+| CLEAR! / STAGE n | the picture gets cleared, and the next one drops in (invader, ghost, heart, skull with two-hit silver bricks, saucer, squid) |
+| **M** / **W** capsules | dropped by the odd brick: M splits that paddle's balls, W widens it for 10 s |
+| Big number on top, 1UP / 2UP at the bottom | total tok/s, then each server's tok/s in its colour |
+| One white ball, INSERT COIN, HI-SCORE | idle attract mode; the HI-SCORE is the tokens generated since the display started |
+
+The playfield, CRT scanlines and cabinet bezel are drawn once and cached, the bricks are re-cached only when one breaks, and the text layer is redrawn only when it changes (numbers update 4x a second). About 0.7 ms per frame; it runs at 20 fps while tokens are flowing and 10 fps in attract mode. `--showcase` runs a scripted 40 s loop through every state. `TOK_PER_BALL`, `MAX_OWN_BALLS`, `FPS_BUSY` and `FPS_IDLE` are in `c/brickout.c`.
+
+<br clear="right">
+
+---
+
+### lantern
+
+<img src="docs/lantern.png" width="480" align="right">
+
+A lantern festival on a mountain lake at night. Every sky lantern is a burst of tokens: it's lit on the water, floats for a moment, then drifts up into the stars.
+
+| On screen | Driven by |
+|---|---|
+| Moon-blue lanterns lit along the left shore | GPU 0's server tok/s, **one lantern per 70 tokens** (up to 10 a second) |
+| Amber lanterns lit along the right shore | GPU 1's server tok/s, same rate |
+| How fast lanterns climb | total tok/s |
+| Blue and amber glow over the water | each server's recent throughput |
+| Lanterns drifting sideways and away | a slow breeze that changes every few seconds, purely visual |
+| Reflections, moonlight shimmer, twinkling stars | always, purely visual |
+| The odd stray lantern, "still night" | idle: no tokens and no running requests |
+| Text on the water | total tok/s, then GPU 0 tok/s (blue), total watts, GPU 1 tok/s (orange); GPU temps instead of tok/s when idle |
+
+The lake is a painting made with an image model (via the Codex CLI) in `c/assets/lantern/`. The lanterns live in a small 3D world and are projected with a pinhole camera, so distant ones are smaller, climb slower and sit nearer the far shore, and each is mirrored about its own spot on the water. Lanterns burn out after 11 to 17 seconds. Bodies and glows are pre-rendered at 64 sizes and blitted unscaled, and the text strip is only redrawn when a number changes (4 times a second at most): about 3.3 ms per frame with ~280 lanterns in the air, 0.4 ms idle. 20 fps, 10 when idle. `--showcase` plays a scripted 40 s festival (the GIF is 10 s of it). `TOKENS_PER_LANTERN`, `MAX_RATE`, `FPS_BUSY` and `FPS_IDLE` are in `c/lantern.c`.
+
+<br clear="right">
+
+---
+
+### lathe
+
+<img src="docs/lathe.png" width="480" align="right">
+
+The round screen is a spinning record and the pump cap is a cutting lathe. While your servers generate, the cutter carves a stereo groove into the disc, so the record becomes a spiral chart of the last minute or two of inference.
+
+| On screen | Driven by |
+|---|---|
+| Groove inner wall (**blue**): brightness, thickness, wiggle | GPU 0's server tok/s |
+| Groove outer wall (**orange**), same | GPU 1's server tok/s |
+| Groove spacing (loud passages get wider spacing, like a real variable-pitch lathe) | total tok/s |
+| Dark gaps between tracks | pauses between requests; a new track starts after 2 s of silence |
+| Platter speed: 33⅓ RPM, 45 RPM when very busy | total tok/s (above 1200 switches to 45, below 900 back to 33⅓) |
+| Cutter glow, lacquer chips, red REC lamp | cutting while tokens flow |
+| Needle lifts, platter spins down, "idle" | idle for 6 s |
+| The record flips to the next side | the cutter reached the label (the side is full) |
+| Label text | per-server tok/s (blue, orange), total tok/s, RPM |
+| Bottom readout | GPU 0 temp (blue), total watts, GPU 1 temp (orange) |
+
+The groove is cut into a persistent surface a few short strokes per frame, and the whole record is painted rotated each frame. The vinyl's bowtie sheen doesn't turn with the disc, so it's a static overlay computed once, and the text is cached and redrawn only when a number changes (4x a second). About 2.8 ms a frame at 20 fps, including JPEG encoding. It drops to 5 fps once the platter has stopped. The strobe dots on the platter rim stand still at 33⅓ RPM, just like on a real turntable. `PITCH_MIN`, `PITCH_MAX`, `TOK_FULL`, `CH_FULL`, `RPM_UP`/`RPM_DOWN`, `GAP_HOLD` and `TRACK_GAP` are in `c/lathe.c`. `--showcase` runs a scripted 44 s loop: a quiet GPU 0 track, a loud track on both GPUs, GPU 1 alone, then more load until the side fills and the record flips.
+
+<br clear="right">
+
 ---
 
 ### singularity
@@ -390,6 +531,11 @@ Render + JPEG encode per frame under heavy load on a Ryzen 9 9950X3D, from `--be
 | `tears` | ~2 ms | 20 / 8 |
 | `koi` | ~3 ms | 20 / 10 |
 | `tears2` | ~2 ms | 20 / 8 |
+| `kombat` | ~3.1 ms | 20 / 8 (30 in showcase) |
+| `butwait` | ~1.2 ms | 20 / 8 |
+| `brickout` | ~0.7 ms | 20 / 10 |
+| `lantern` | ~3.3 ms | 20 / 10 |
+| `lathe` | ~2.8 ms | 20 / 5 |
 | `fishbowl` | ~2.1 ms | 24 / 12 |
 | `singularity` | ~2.1 ms | 24 / 8 |
 | `brrr` | ~2.3 ms | 20 / 8 (30 in showcase) |
