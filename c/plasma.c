@@ -1,8 +1,9 @@
 /*
  * plasma: your LLM servers as a plasma globe on the iCUE LINK AIO pump LCD.
  *
- * One filament per request slot (vLLM --max-num-seqs) on each server: violet on the
- * left for the ZOTAC's, pink on the right for the TUF's. Busy slots crackle brightly
+ * One filament per busy request slot (vLLM --max-num-seqs) on each server: violet
+ * for the ZOTAC's, pink for the TUF's. Filaments roam and swirl around the globe,
+ * faster with throughput, and push apart like a real plasma ball. Busy slots crackle
  * and carry token pulses at the server's real rate; free slots are hidden, fading
  * in and out as requests start and finish.
  * Run with --demo to simulate data, --bench to write preview PNGs.
@@ -296,7 +297,8 @@ static void demo_poll(stats *s, double t)
 #define FREE_GLOW       0.0         /* free slots are hidden */
 
 typedef struct {
-    double theta, home;     /* current / resting angle where it meets the glass */
+    double theta, home;     /* current angle where it meets the glass / initial layout angle */
+    double omega;           /* its own angular velocity (rad/s) */
     double phase[3];        /* noise phases for its shape */
     double life;            /* brightness, eased toward 1 when busy, FREE_GLOW when free */
     double jit;             /* this filament's crackle, eased */
@@ -357,16 +359,45 @@ static void simulate(const stats *s, double dt, double t, double *jitter)
     /* How violently busy filaments crackle */
     *jitter = 0.6 + fmin(s->tok_s, 2400) / 1200;
 
+    /* The whole globe swirls, faster with throughput */
+    double swirl = 0.18 + fmin(s->tok_s, 2400) / 3000;
+
     for (int i = 0; i < N_SLOTS; i++) {
         filament *f = &fils[i];
         int k = i % SLOTS_PER_SERVER;
+        int was_busy = f->busy;
         f->busy = k < s->running_port[f->src];
+        if (f->busy && !was_busy && f->life < 0.05) {
+            /* Newly live slot: start it in the widest gap between visible filaments */
+            double best = f->home, best_gap = -1;
+            for (int c = 0; c < 24; c++) {
+                double cand = c * 2 * M_PI / 24, gap = 10;
+                for (int j = 0; j < N_SLOTS; j++)
+                    if (j != i && fils[j].life > 0.05)
+                        gap = fmin(gap, fabs(remainder(cand - fils[j].theta, 2 * M_PI)));
+                if (gap > best_gap) { best_gap = gap; best = cand; }
+            }
+            f->theta = best;
+            f->omega = (frand() - 0.5) * 0.6;
+        }
         double want = f->busy ? 1 : FREE_GLOW, want_jit = f->busy ? *jitter : 0.2;
         f->life += (want - f->life) * fmin(1, dt * 4);
         f->jit += (want_jit - f->jit) * fmin(1, dt * 3);
+        if (f->life < 0.01)
+            continue;
 
-        /* Wander a little around its home angle */
-        f->theta = f->home + 0.12 * sin(t * (f->busy ? 0.7 : 0.25) + f->phase[0]);
+        /* Roam: random wander, damping, and a push away from close neighbours */
+        f->omega += (frand() - 0.5) * 2.4 * dt;
+        f->omega *= exp(-dt * 0.8);
+        for (int j = 0; j < N_SLOTS; j++) {
+            if (j == i || fils[j].life < 0.05)
+                continue;
+            double d = remainder(f->theta - fils[j].theta, 2 * M_PI);
+            if (fabs(d) < 0.8)
+                f->omega += (d >= 0 ? 1 : -1) * (0.8 - fabs(d)) * 3.0 * dt;
+        }
+        f->omega = fmax(-1.2, fmin(1.2, f->omega));
+        f->theta = remainder(f->theta + (f->omega + swirl) * dt, 2 * M_PI);
 
         for (int j = 0; j < FIL_PTS; j++) {
             double u = j / (double)(FIL_PTS - 1);
