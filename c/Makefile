@@ -2,11 +2,11 @@ CFLAGS  ?= -O2 -march=native -Wall -Wextra
 CFLAGS  += $(shell pkg-config --cflags cairo libturbojpeg) -I/opt/cuda/include
 LDLIBS  += $(shell pkg-config --libs cairo libturbojpeg) -lnvidia-ml -lm
 
-DISPLAYS = reactor singularity synapse horizon brrr plasma fishbowl autumn thirst tears
+DISPLAYS = reactor singularity synapse horizon brrr plasma fishbowl autumn thirst tears koi
 
 all: $(DISPLAYS)
 
-reactor singularity synapse brrr plasma fishbowl autumn thirst tears: %: %.c
+reactor singularity synapse brrr plasma fishbowl autumn thirst tears koi: %: %.c
 	$(CC) $(CFLAGS) -o $@ $< $(LDLIBS)
 
 horizon: horizon.c
@@ -14,6 +14,7 @@ horizon: horizon.c
 
 install: all
 	for d in $(DISPLAYS); do install -Dm755 $$d $(DESTDIR)/opt/llm-reactor/$$d; done
+	for f in assets/*/*.png; do install -Dm644 $$f $(DESTDIR)/opt/llm-reactor/$$f; done
 
 clean:
 	rm -f $(DISPLAYS) *_preview.png

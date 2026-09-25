@@ -21,7 +21,7 @@ Built for a dual RTX 5090 box running two vLLM servers (one per GPU), but the GP
 <td align="center"><img src="docs/gif/reactor.gif" width="240"><br><b>reactor</b></td>
 </tr>
 <tr>
-<td></td>
+<td align="center"><img src="docs/gif/koi.gif" width="240"><br><b>koi</b></td>
 <td align="center"><img src="docs/gif/tears.gif" width="240"><br><b>tears</b></td>
 <td></td>
 </tr>
@@ -32,7 +32,7 @@ The GIFs are recorded from each display's `--demo` mode (simulated data), `brrr`
 ## Contents
 
 - [Quick start](#quick-start)
-- [Displays](#displays): [brrr](#brrr) · [horizon](#horizon) · [plasma](#plasma) · [fishbowl](#fishbowl) · [autumn](#autumn) · [thirst](#thirst) · [tears](#tears) · [singularity](#singularity) · [synapse](#synapse) · [reactor](#reactor)
+- [Displays](#displays): [brrr](#brrr) · [horizon](#horizon) · [plasma](#plasma) · [fishbowl](#fishbowl) · [autumn](#autumn) · [thirst](#thirst) · [tears](#tears) · [koi](#koi) · [singularity](#singularity) · [synapse](#synapse) · [reactor](#reactor)
 - [Configuration](#configuration)
 - [Command line and environment](#command-line-and-environment)
 - [Performance](#performance)
@@ -236,6 +236,27 @@ The GIF above is a 4x time-lapse of about 70 seconds of `--demo`, so the whole m
 
 ---
 
+### koi
+
+<img src="docs/koi.png" width="480" align="right">
+
+A koi pond fed by your LLM, using AI-generated art: the pond painting and both koi sprites were made with an image model (via the Codex CLI) and live in `c/assets/koi/`.
+
+| On screen | Driven by |
+|---|---|
+| Blue koi (three) | GPU 0's server |
+| Orange-and-white koi (three) | GPU 1's server |
+| Food pellets landing on the water, with a ripple in the server's colour | each server's tok/s: one pellet per 24 tokens, up to 3 a second per server |
+| Koi darting to the food and eating it | their own server's pellets; uneaten ones sink after 10 s |
+| Koi drifting slowly | idle |
+| Text | total tok/s (or "still water"), total watts |
+
+The sprites are top-down, so they rotate cleanly; to make them swim instead of slide, each fish is cut into strips that are shifted by a travelling wave growing toward the tail, built upright in a scratch surface and then rotated onto the pond in one paint. About 3 ms per frame, 20 fps busy, 10 idle. `make install` copies the assets next to the binary, where `koi` looks for them (it also finds them in `./assets/koi` when run from `c/`).
+
+<br clear="right">
+
+---
+
 ### singularity
 
 <img src="docs/singularity.png" width="480" align="right">
@@ -345,6 +366,7 @@ Render + JPEG encode per frame under heavy load on a Ryzen 9 9950X3D, from `--be
 | `reactor` | ~1.7 ms | 12 / 6 |
 | `thirst` | ~0.7 ms | 20 / 8 |
 | `tears` | ~2 ms | 20 / 8 |
+| `koi` | ~3 ms | 20 / 10 |
 | `fishbowl` | ~2.1 ms | 24 / 12 |
 | `singularity` | ~2.1 ms | 24 / 8 |
 | `brrr` | ~2.3 ms | 20 / 8 (30 in showcase) |
