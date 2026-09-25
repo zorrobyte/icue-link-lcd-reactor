@@ -3,8 +3,8 @@
  *
  * One filament per request slot (vLLM --max-num-seqs) on each server: violet on the
  * left for the ZOTAC's, pink on the right for the TUF's. Busy slots crackle brightly
- * and carry token pulses at the server's real rate; free slots drift faint and dim,
- * so the globe shows both what's running and the spare capacity.
+ * and carry token pulses at the server's real rate; free slots are hidden, fading
+ * in and out as requests start and finish.
  * Run with --demo to simulate data, --bench to write preview PNGs.
  */
 #define _GNU_SOURCE
@@ -293,7 +293,7 @@ static void demo_poll(stats *s, double t)
 
 #define SLOTS_PER_SERVER 4          /* vLLM --max-num-seqs on each server */
 #define N_SLOTS         (SLOTS_PER_SERVER * 2)
-#define FREE_GLOW       0.22        /* brightness of an idle slot */
+#define FREE_GLOW       0.0         /* free slots are hidden */
 
 typedef struct {
     double theta, home;     /* current / resting angle where it meets the glass */
@@ -344,9 +344,7 @@ static void spawn_pulse(int src)
         if (fils[i].src == src && fils[i].busy)
             cand[n++] = i;
     if (!n)
-        for (int i = 0; i < N_SLOTS; i++)
-            if (fils[i].src == src)
-                cand[n++] = i;
+        return;                     /* no visible slot to carry it */
     for (int i = 0; i < MAX_PULSES; i++)
         if (!pulses[i].alive) {
             pulses[i] = (pulse){ cand[rand() % n], 0, 1 };
@@ -449,6 +447,8 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t, dou
     cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
     for (int i = 0; i < N_SLOTS; i++) {
         const filament *f = &fils[i];
+        if (f->life < 0.01)
+            continue;               /* free slot: not shown */
         rgb col = fil_color(f->src);
         double flicker = f->busy ? 0.8 + 0.2 * sin(t * (14 + 10 * jitter) + i * 1.7) : 1;
         double a = f->life * flicker;
@@ -508,7 +508,7 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t, dou
         double x = f->px[k] + (f->px[k + 1] - f->px[k]) * fr, y = f->py[k] + (f->py[k + 1] - f->py[k]) * fr;
         rgb col = fil_color(f->src);
         cairo_pattern_t *g = cairo_pattern_create_radial(x, y, 0, x, y, 6);
-        cairo_pattern_add_color_stop_rgba(g, 0, 1, 1, 1, 0.9 * fmax(f->life, 0.6));
+        cairo_pattern_add_color_stop_rgba(g, 0, 1, 1, 1, 0.9 * f->life);
         cairo_pattern_add_color_stop_rgba(g, 1, col.r, col.g, col.b, 0);
         cairo_set_source(cr, g);
         cairo_arc(cr, x, y, 6, 0, 2 * M_PI);
