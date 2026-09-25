@@ -1,0 +1,12 @@
+[Unit]
+Description=LLM reactor dashboard on the iCUE LINK pump LCD
+After=multi-user.target
+
+[Service]
+ExecStart=/opt/llm-reactor/reactor
+Restart=always
+RestartSec=5
+Nice=5
+
+[Install]
+WantedBy=multi-user.target
