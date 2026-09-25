@@ -193,7 +193,7 @@ Two GPUs chase kids to steal their water. A satire of AI datacenters' water use.
 |---|---|
 | Blue GPU chasing | GPU 0's server: its speed is set by that server's tok/s |
 | Orange GPU chasing | GPU 1's server, same |
-| Kids getting away | low tok/s: the kids (72 px/s) outrun slow GPUs |
+| Kids getting away | low tok/s: the kids outrun slow GPUs |
 | GPU catches a kid, "SLURP" | the cup is drained; the kid walks to the well to refill, then gets a short head start |
 | GPU napping by the datacenter | its server is idle |
 | Water tower level | drains with tokens (3 L full), slowly refills when idle |

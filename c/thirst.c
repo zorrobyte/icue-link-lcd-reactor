@@ -320,16 +320,16 @@ static void demo_poll(stats *s, double t)
 
 #define FPS_BUSY        20
 #define FPS_IDLE        8
-#define N_KIDS          5
-#define GROUND_Y        318.0       /* where the dry ground starts */
-#define ARENA_X0        64.0
-#define ARENA_X1        416.0
-#define ARENA_Y0        342.0
-#define ARENA_Y1        424.0
+#define N_KIDS          4
+#define GROUND_Y        262.0       /* where the dry ground starts */
+#define ARENA_X0        78.0
+#define ARENA_X1        402.0
+#define ARENA_Y0        318.0
+#define ARENA_Y1        404.0
 #define WELL_X          240.0
-#define WELL_Y          352.0
-#define DOOR_X          104.0       /* where GPUs nap, in front of the datacenter */
-#define DOOR_Y          350.0
+#define WELL_Y          300.0
+#define DOOR_X          120.0       /* where GPUs nap, in front of the datacenter */
+#define DOOR_Y          330.0
 /*
  * Water per generated token, as a datacenter-equivalent estimate: Li et al. 2023,
  * "Making AI Less Thirsty", put GPT-3 at roughly 500 mL per 10 to 50 medium-length
@@ -337,6 +337,9 @@ static void demo_poll(stats *s, double t)
  */
 #define ML_PER_TOKEN    (500.0 / (30 * 300))
 #define TANK_L          3.0         /* litres the water tower shows as full */
+#define KID_SCALE       2.0
+#define GPU_SCALE       1.7
+#define BG_SHIFT        (-58.0)     /* datacenter, tower and sun sit higher than the original layout */
 
 enum { KID_WATER, KID_DRAINED, KID_REFILL };
 enum { GPU_HUNT, GPU_DRINK, GPU_NAP };
@@ -384,6 +387,8 @@ static void build_background(void)
     cairo_set_source(cr, g);
     cairo_fill(cr);
     cairo_pattern_destroy(g);
+    cairo_save(cr);
+    cairo_translate(cr, 0, BG_SHIFT);
     /* Blazing sun */
     g = cairo_pattern_create_radial(372, 118, 20, 372, 118, 110);
     cairo_pattern_add_color_stop_rgba(g, 0, 1, 1, 0.85, 0.9);
@@ -395,6 +400,8 @@ static void build_background(void)
     cairo_arc(cr, 372, 118, 26, 0, 2 * M_PI);
     cairo_set_source_rgb(cr, 1, 0.97, 0.80);
     cairo_fill(cr);
+
+    cairo_restore(cr);
 
     /* Dry, cracked ground */
     cairo_rectangle(cr, 0, GROUND_Y, SIZE, SIZE - GROUND_Y);
@@ -420,7 +427,7 @@ static void build_background(void)
     cairo_set_source_rgb(cr, 0.45, 0.32, 0.18);
     cairo_set_line_width(cr, 1.6);
     for (int b = 0; b < 3; b++) {
-        double bx = 70 + b * 170 + frand() * 20, by = GROUND_Y + 14 + b * 6;
+        double bx = 60 + b * 180 + frand() * 20, by = GROUND_Y + 10 + b * 4;
         for (int k = 0; k < 6; k++) {
             double a = -M_PI / 2 + (frand() - 0.5) * 1.8;
             cairo_move_to(cr, bx, by);
@@ -429,6 +436,8 @@ static void build_background(void)
     }
     cairo_stroke(cr);
 
+    cairo_save(cr);
+    cairo_translate(cr, 0, BG_SHIFT);
     /* The datacenter: grey box, vents, a big "AI" logo, cooling units on the roof */
     cairo_rectangle(cr, 34, 214, 150, 110);
     cairo_set_source_rgb(cr, 0.55, 0.57, 0.62);
@@ -465,6 +474,8 @@ static void build_background(void)
     cairo_move_to(cr, 414, 266); cairo_line_to(cr, 426, 324);
     cairo_move_to(cr, 362, 296); cairo_line_to(cr, 422, 296);
     cairo_stroke(cr);
+
+    cairo_restore(cr);
 
     /* The village well the kids refill at */
     cairo_save(cr);
@@ -513,8 +524,8 @@ static void init_actors(void)
         k->hy = k->y;
     }
     for (int g = 0; g < 2; g++) {
-        gpus[g].x = DOOR_X + g * 92;
-        gpus[g].y = DOOR_Y + g * 10;
+        gpus[g].x = DOOR_X + g * 150;
+        gpus[g].y = DOOR_Y + g * 12;
         gpus[g].face = 1;
         gpus[g].state = GPU_NAP;
         gpus[g].target = -1;
@@ -549,15 +560,16 @@ static void simulate(const stats *s, double dt, double t)
         } else if (g->state == GPU_NAP) {
             g->state = GPU_HUNT;
         }
-        g->speed = 26 + fmin(tokp, 1400) * 0.11;
+        g->speed = 32 + fmin(tokp, 1400) * 0.14;
 
         if (g->state == GPU_NAP) {
-            double tx = DOOR_X + gi * 92, ty = DOOR_Y + gi * 10;
+            double tx = DOOR_X + gi * 150, ty = DOOR_Y + gi * 12;
             double dx = tx - g->x, dy = ty - g->y, d = hypot(dx, dy);
             if (d > 3) {
                 g->x += dx / d * 40 * dt;
                 g->y += dy / d * 40 * dt;
-                g->face = dx >= 0 ? 1 : -1;
+                if (fabs(dx) > 6)
+                    g->face = dx > 0 ? 1 : -1;
                 g->step += dt * 8;
             }
             continue;
@@ -598,8 +610,9 @@ static void simulate(const stats *s, double dt, double t)
         }
         kid *k = &kids[best];
         double dx = k->x - g->x, dy = k->y - g->y, d = hypot(dx, dy);
-        g->face = dx >= 0 ? 1 : -1;
-        if (d < 34) {
+        if (fabs(dx) > 20)
+            g->face = dx > 0 ? 1 : -1;
+        if (d < 50) {
             g->state = GPU_DRINK;               /* caught: straw in the cup */
             continue;
         }
@@ -611,11 +624,11 @@ static void simulate(const stats *s, double dt, double t)
 
     {
         double dx = gpus[0].x - gpus[1].x, dy = gpus[0].y - gpus[1].y, d = hypot(dx, dy);
-        if (d < 70 && d > 0.1) {
+        if (d < 110 && d > 0.1) {
             for (int gi = 0; gi < 2; gi++) {
                 double sgn = gi ? -1 : 1;
-                gpus[gi].x += sgn * dx / d * (70 - d) * 1.5 * dt;
-                gpus[gi].y += sgn * dy / d * (70 - d) * 1.5 * dt;
+                gpus[gi].x += sgn * dx / d * (110 - d) * 1.5 * dt;
+                gpus[gi].y += sgn * dy / d * (110 - d) * 1.5 * dt;
                 clamp_arena(&gpus[gi].x, &gpus[gi].y);
             }
         }
@@ -626,7 +639,7 @@ static void simulate(const stats *s, double dt, double t)
         kid *k = &kids[i];
         int being_drunk = (gpus[0].state == GPU_DRINK && gpus[0].target == i) ||
                           (gpus[1].state == GPU_DRINK && gpus[1].target == i);
-        double wx = 0, wy = 0, speed = 22;
+        double wx = 0, wy = 0, speed = 28;
         k->safe -= dt;
         if (being_drunk) {
             k->vx = k->vy = 0;
@@ -637,17 +650,17 @@ static void simulate(const stats *s, double dt, double t)
                 if (gpus[gi].state != GPU_HUNT)
                     continue;
                 double dx = k->x - gpus[gi].x, dy = k->y - gpus[gi].y, d = hypot(dx, dy);
-                if (d < 110 && d > 0.1) {
-                    wx += dx / d * (110 - d);
-                    wy += dy / d * (110 - d);
+                if (d < 150 && d > 0.1) {
+                    wx += dx / d * (150 - d);
+                    wy += dy / d * (150 - d);
                 }
             }
             if (wx || wy) {
-                speed = 72;                     /* run! */
+                speed = 90;                     /* run! */
             } else if (hypot(k->hx - k->x, k->hy - k->y) > 10) {
                 wx = k->hx - k->x;              /* head back out into town */
                 wy = k->hy - k->y;
-                speed = 40;
+                speed = 50;
             } else {
                 k->timer -= dt;
                 if (k->timer <= 0) {
@@ -660,10 +673,10 @@ static void simulate(const stats *s, double dt, double t)
                 wy = k->vy;
             }
         } else if (k->state == KID_DRAINED) {
-            wx = WELL_X + (i - 2) * 12 - k->x;
-            wy = WELL_Y + 14 - k->y;
-            speed = 30;
-            if (hypot(wx, wy) < 8) {
+            wx = WELL_X + (i - 1.5) * 30 - k->x;
+            wy = WELL_Y + 26 - k->y;
+            speed = 38;
+            if (hypot(wx, wy) < 10) {
                 k->state = KID_REFILL;
                 k->timer = 1.6;
             }
@@ -677,7 +690,7 @@ static void simulate(const stats *s, double dt, double t)
                 /* pick a spot away from the well */
                 double a = frand() * 2 * M_PI;
                 k->hx = WELL_X + cos(a) * (110 + frand() * 60);
-                k->hy = WELL_Y + 30 + sin(a) * 36;
+                k->hy = WELL_Y + 50 + sin(a) * 40;
                 clamp_arena(&k->hx, &k->hy);
             }
             continue;
@@ -687,16 +700,17 @@ static void simulate(const stats *s, double dt, double t)
             if (j == i)
                 continue;
             double dx = k->x - kids[j].x, dy = k->y - kids[j].y, d = hypot(dx, dy);
-            if (d < 26 && d > 0.1) {
-                k->x += dx / d * (26 - d) * 2 * dt;
-                k->y += dy / d * (26 - d) * 2 * dt;
+            if (d < 44 && d > 0.1) {
+                k->x += dx / d * (44 - d) * 2 * dt;
+                k->y += dy / d * (44 - d) * 2 * dt;
             }
         }
         double n = hypot(wx, wy);
         if (n > 0.01) {
             k->x += wx / n * speed * dt;
             k->y += wy / n * speed * dt;
-            k->face = wx >= 0 ? 1 : -1;
+            if (fabs(wx / n) > 0.4)
+                k->face = wx > 0 ? 1 : -1;      /* no flip-flopping on small wobbles */
             k->step += dt * (3 + speed * 0.12);
         }
         clamp_arena(&k->x, &k->y);
@@ -741,7 +755,7 @@ static void draw_kid(cairo_t *cr, const kid *k, int being_drunk)
     double leg = sin(k->step * 2) * 5;
     cairo_save(cr);
     cairo_translate(cr, k->x, k->y);
-    cairo_scale(cr, k->face * 1.4, 1.4);
+    cairo_scale(cr, k->face * KID_SCALE, KID_SCALE);
     /* shadow */
     cairo_save(cr);
     cairo_scale(cr, 1, 0.3);
@@ -763,11 +777,16 @@ static void draw_kid(cairo_t *cr, const kid *k, int being_drunk)
     cairo_line_to(cr, -5, -22);
     cairo_close_path(cr);
     set_rgb(cr, shirt);
-    cairo_fill(cr);
+    cairo_fill_preserve(cr);
+    cairo_set_line_width(cr, 1);
+    cairo_set_source_rgba(cr, 0.15, 0.08, 0.04, 0.8);
+    cairo_stroke(cr);
     /* head */
     cairo_arc(cr, 0, -28, 7, 0, 2 * M_PI);
     set_rgb(cr, skin);
-    cairo_fill(cr);
+    cairo_fill_preserve(cr);
+    cairo_set_source_rgba(cr, 0.15, 0.08, 0.04, 0.8);
+    cairo_stroke(cr);
     cairo_arc(cr, 3, -29, 1.2, 0, 2 * M_PI);
     cairo_set_source_rgb(cr, 0.1, 0.1, 0.1);
     cairo_fill(cr);
@@ -801,7 +820,7 @@ static void draw_gpu(cairo_t *cr, const gpu *g, int gi, double t)
     double leg = g->state == GPU_NAP ? 0 : sin(g->step * 2) * 4;
     cairo_save(cr);
     cairo_translate(cr, g->x, g->y);
-    cairo_scale(cr, g->face * 1.25, 1.25);
+    cairo_scale(cr, g->face * GPU_SCALE, GPU_SCALE);
     /* shadow */
     cairo_save(cr);
     cairo_scale(cr, 1, 0.25);
@@ -830,9 +849,10 @@ static void draw_gpu(cairo_t *cr, const gpu *g, int gi, double t)
     cairo_set_source_rgb(cr, 0.95, 0.78, 0.25);
     cairo_fill(cr);
     cairo_rectangle(cr, -34, -34, 68, 28);
-    cairo_set_line_width(cr, 1.5);
-    set_rgb(cr, dark);
+    cairo_set_line_width(cr, 2);
+    cairo_set_source_rgb(cr, 0.10, 0.08, 0.10);
     cairo_stroke(cr);
+    (void)dark;
     /* two spinning fans */
     for (int f = 0; f < 2; f++) {
         double fx = -15 + f * 30, fy = -20;
@@ -876,15 +896,15 @@ static void draw_gpu(cairo_t *cr, const gpu *g, int gi, double t)
 
     if (g->state == GPU_DRINK) {
         cairo_select_font_face(cr, "DejaVu Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
-        cairo_set_font_size(cr, 13 + 2 * sin(t * 12));
-        cairo_move_to(cr, g->x - 24, g->y - 82);
+        cairo_set_font_size(cr, 20 + 3 * sin(t * 12));
+        cairo_move_to(cr, g->x - 30, g->y - 108);
         cairo_set_source_rgb(cr, 0.15, 0.35, 0.8);
         cairo_show_text(cr, "SLURP");
     } else if (g->state == GPU_NAP) {
         cairo_select_font_face(cr, "DejaVu Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
         double ph = fmod(t * 0.5 + gi * 0.5, 1.0);
-        cairo_set_font_size(cr, 10 + ph * 8);
-        cairo_move_to(cr, g->x + 14 + ph * 12, g->y - 38 - ph * 24);
+        cairo_set_font_size(cr, 16 + ph * 12);
+        cairo_move_to(cr, g->x + 20 + ph * 16, g->y - 56 - ph * 30);
         cairo_set_source_rgba(cr, 0.3, 0.3, 0.4, 1 - ph);
         cairo_show_text(cr, "z");
     }
@@ -911,15 +931,15 @@ static void update_hud(const stats *s, const shown_t *sh, double t)
     cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
 
     snprintf(txt, sizeof(txt), lit < 100 ? "%.1f L" : "%.0f L", lit);
-    text_center(cr, c + 12, 56, 34, 1, (rgb){ 1, 1, 1 }, txt);
-    draw_droplet(cr, c - 56 - (lit >= 10 ? 10 : 0), 56, 28, WATER);
-    text_center(cr, c, 86, 12, 1, (rgb){ 1, 0.95, 0.85 }, "datacenter-equivalent water");
+    text_center(cr, c + 16, 58, 46, 1, (rgb){ 1, 1, 1 }, txt);
+    draw_droplet(cr, c - 72 - (lit >= 10 ? 14 : 0), 58, 38, WATER);
+    text_center(cr, c, 100, 16, 1, (rgb){ 1, 0.95, 0.85 }, "datacenter water");
 
     if (s->tok_s < 1 && s->running == 0)
         snprintf(txt, sizeof(txt), "idle  \xC2\xB7  %.0f W", watts);
     else
-        snprintf(txt, sizeof(txt), "%.0f tok/s  \xC2\xB7  %.0f W", tok, watts);
-    text_center(cr, c, 454, 17, 1, (rgb){ 1, 1, 1 }, txt);
+        snprintf(txt, sizeof(txt), "%.0f tok/s \xC2\xB7 %.0f W", tok, watts);
+    text_center(cr, c, 446, 22, 1, (rgb){ 1, 1, 1 }, txt);
     cairo_destroy(cr);
 }
 
@@ -928,6 +948,8 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t)
     cairo_set_source_surface(cr, bg_cache, 0, 0);
     cairo_paint(cr);
 
+    cairo_save(cr);
+    cairo_translate(cr, 0, BG_SHIFT);
     /* Water tower tank with the level dropping */
     cairo_rectangle(cr, 356, 214, 72, 54);
     cairo_set_source_rgb(cr, 0.55, 0.40, 0.30);
@@ -957,6 +979,8 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t)
             cairo_set_source_rgb(cr, 0.2, 0.25, 0.25);
         cairo_fill(cr);
     }
+
+    cairo_restore(cr);
 
     /* Draw everyone back to front by depth */
     int order[N_KIDS + 2];
