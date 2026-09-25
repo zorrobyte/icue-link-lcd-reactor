@@ -1,12 +1,10 @@
 /*
- * fishbowl: your LLM servers as a fishbowl on the iCUE LINK AIO pump LCD.
+ * fishbowl: an aquarium of pet fish on the iCUE LINK AIO pump LCD, fed by your LLM.
  *
- * Every busy request slot is a fish: blue tangs for the ZOTAC's vLLM server, orange
- * goldfish for the TUF's. A fish swims in from off screen when a request starts and
- * swims out when it finishes. Tokens are fish food: each server's tokens drop from its
- * floating feeding ring as flakes at the real rate, and its fish chase and eat them.
- * Fish swim faster with their server's tokens/sec. Light rays, caustics, swaying seaweed, a bubbler
- * and a very slow snail. Idle, the bowl is empty apart from the snail.
+ * Six pet fish live in the tank. Generated tokens from every vLLM server sprinkle in
+ * as food flakes at random spots on the surface (one per 25 tokens); the fish perk up,
+ * chase and eat them. Light rays, caustics, swaying seaweed, a bubbler and a very slow
+ * snail. Idle, the fish cruise lazily. Watts and GPU temps sit on the sand.
  * Run with --demo to simulate data, --bench to write preview PNGs.
  */
 #define _GNU_SOURCE
@@ -287,15 +285,13 @@ static void demo_poll(stats *s, double t)
 
 /* ---------------------------------------------------------------- bowl */
 
-#define SLOTS_PER_SERVER 4          /* vLLM --max-num-seqs on each server */
-#define N_SLOTS         (SLOTS_PER_SERVER * 2)
+#define N_FISH          6           /* pet fish that always live in the tank */
 #define SURFACE_Y       62.0        /* water line */
 #define SAND_Y          372.0       /* top of the sand */
 #define SWIM_R          196.0       /* fish stay inside this radius */
 #define MAX_BUBBLES     500
-#define TOKENS_PER_FLAKE 35.0      /* one food flake per this many generated tokens */
+#define TOKENS_PER_FLAKE 25.0      /* one food flake per this many generated tokens */
 #define MAX_FLAKES      700
-#define RING_DX         80.0        /* feeding rings sit this far either side of center */
 #define N_WEEDS         6
 #define N_PEBBLES       26
 
@@ -304,19 +300,15 @@ typedef struct {
     double turn;                    /* current turn rate */
     double tail;                    /* tail wag phase */
     double size;
-    double exit_x;                  /* where it's heading when leaving */
     double gulp;                    /* 1 right after eating, decays */
-    int    src, busy;
-    int    state;                   /* FISH_GONE, FISH_IN (swimming in or around), FISH_LEAVING */
+    int    species;
 } fish;
 
-typedef struct { double x, y, vx, vy, rot, spin, settled; int src, alive; } flake;
-
-enum { FISH_GONE, FISH_IN, FISH_LEAVING };
+typedef struct { double x, y, vx, vy, rot, spin, settled; int kind, alive; } flake;
 
 typedef struct { double x, y, r, wob, vy; int alive; } bubble;
 
-static fish   fishes[N_SLOTS];
+static fish   fishes[N_FISH];
 static bubble bubbles[MAX_BUBBLES];
 static flake  flakes[MAX_FLAKES];
 static double flake_acc[2];
@@ -327,11 +319,27 @@ static double snail_x = 150;
 
 static double frand(void) { return rand() / (double)RAND_MAX; }
 
-static rgb fish_color(int src)
+static const rgb GPU_BLUE   = { 0.20, 0.55, 1.0 };  /* ZOTAC stats */
+static const rgb GPU_ORANGE = { 1.0, 0.52, 0.10 };  /* TUF stats */
+
+static rgb fish_color(int species)
 {
-    static const rgb TANG = { 0.20, 0.55, 1.0 };       /* ZOTAC: blue tang */
-    static const rgb GOLD = { 1.0, 0.52, 0.10 };       /* TUF: goldfish */
-    return src == 0 ? TANG : GOLD;
+    static const rgb pal[N_FISH] = {
+        { 0.20, 0.55, 1.00 },       /* blue tang */
+        { 1.00, 0.52, 0.10 },       /* goldfish */
+        { 1.00, 0.84, 0.15 },       /* yellow tang */
+        { 0.95, 0.25, 0.25 },       /* red */
+        { 0.65, 0.40, 1.00 },       /* purple */
+        { 1.00, 0.60, 0.20 },       /* second goldfish */
+    };
+    return pal[species % N_FISH];
+}
+
+/* Flake food colours */
+static rgb flake_color(int kind)
+{
+    static const rgb pal[4] = { { 0.85, 0.25, 0.20 }, { 0.95, 0.80, 0.30 }, { 0.45, 0.70, 0.25 }, { 0.80, 0.60, 0.40 } };
+    return pal[kind & 3];
 }
 
 static void init_bowl(void)
@@ -347,9 +355,16 @@ static void init_bowl(void)
         peb_r[i] = 3 + frand() * 6;
         peb_c[i] = frand();
     }
-    for (int i = 0; i < N_SLOTS; i++) {
-        fishes[i].src = i / SLOTS_PER_SERVER;
-        fishes[i].size = 0.9 + frand() * 0.25;
+    static const double sizes[N_FISH] = { 1.15, 1.0, 0.85, 0.75, 0.9, 0.8 };
+    for (int i = 0; i < N_FISH; i++) {
+        fish *f = &fishes[i];
+        f->species = i;
+        f->size = sizes[i];
+        f->x = 130 + frand() * 220;
+        f->y = 130 + frand() * 190;
+        f->heading = frand() < 0.5 ? 0 : M_PI;
+        f->speed = 30;
+        f->tail = frand() * 6;
     }
 }
 
@@ -362,14 +377,12 @@ static void spawn_bubble(double x, double y, double r)
         }
 }
 
-static void spawn_flake(int src)
+static void spawn_flake(void)
 {
-    const double c = SIZE / 2.0;
     for (int i = 0; i < MAX_FLAKES; i++)
         if (!flakes[i].alive) {
-            double rx = c + (src == 0 ? -RING_DX : RING_DX);
-            flakes[i] = (flake){ rx + (frand() - 0.5) * 34, SURFACE_Y + 6, (frand() - 0.5) * 150, 8 + frand() * 14,
-                                 frand() * M_PI, (frand() - 0.5) * 4, 0, src, 1 };
+            flakes[i] = (flake){ 90 + frand() * 300, SURFACE_Y + 4, (frand() - 0.5) * 30, 8 + frand() * 14,
+                                 frand() * M_PI, (frand() - 0.5) * 4, 0, rand() & 3, 1 };
             return;
         }
 }
@@ -381,7 +394,7 @@ static int nearest_flake(const fish *f)
     double bd = 230;
     for (int i = 0; i < MAX_FLAKES; i++) {
         const flake *k = &flakes[i];
-        if (!k->alive || k->settled > 0 || k->src != f->src)
+        if (!k->alive || k->settled > 0)
             continue;
         if (k->y < SURFACE_Y + 35 || k->y > SAND_Y - 20 || hypot(k->x - SIZE / 2.0, k->y - SIZE / 2.0) > SWIM_R - 25)
             continue;                               /* out of reach: at the surface, on the sand, at the glass */
@@ -398,32 +411,15 @@ static void simulate(const stats *s, double dt, double t)
 {
     const double c = SIZE / 2.0;
 
-    for (int i = 0; i < N_SLOTS; i++) {
+    int food = 0;
+    for (int i = 0; i < MAX_FLAKES; i++)
+        food += flakes[i].alive && flakes[i].settled == 0;
+
+    for (int i = 0; i < N_FISH; i++) {
         fish *f = &fishes[i];
-        f->busy = i % SLOTS_PER_SERVER < s->running_port[f->src];
 
-        if (f->busy && f->state == FISH_GONE) {
-            /* A new request swims in from off screen */
-            int left = frand() < 0.5;
-            f->x = left ? -30 : SIZE + 30;
-            f->y = 150 + frand() * 170;
-            f->heading = left ? (frand() - 0.5) * 0.4 : M_PI + (frand() - 0.5) * 0.4;
-            f->turn = 0;
-            f->speed = 90;
-            f->state = FISH_IN;
-        } else if (f->busy && f->state == FISH_LEAVING) {
-            f->state = FISH_IN;                         /* new request on this slot: come back */
-        } else if (!f->busy && f->state == FISH_IN) {
-            f->state = FISH_LEAVING;                    /* request finished: swim out the nearer side */
-            f->exit_x = f->x < c ? -80 : SIZE + 80;
-        }
-        if (f->state == FISH_GONE)
-            continue;
-
-        /* Speed from this server's throughput shared across its busy slots */
-        int busy_here = s->running_port[f->src] > 0 ? s->running_port[f->src] : 1;
-        double per_slot = s->tok_port[f->src] / busy_here;
-        double want_speed = f->state == FISH_LEAVING ? 120 : 35 + fmin(per_slot, 700) * 0.22;
+        /* Lazy cruising when idle, livelier while food is falling */
+        double want_speed = (s->tok_s < 1 ? 18 : 32) + (food ? 45 : 0) * (0.6 + 0.4 * f->size);
         f->speed += (want_speed - f->speed) * fmin(1, dt * 1.5);
         f->tail += dt * (4 + f->speed * 0.12);
         f->gulp *= exp(-dt * 6);
@@ -433,15 +429,7 @@ static void simulate(const stats *s, double dt, double t)
         f->turn += (frand() - 0.5) * 3.0 * dt;
         f->turn *= exp(-dt * 1.2);
 
-        if (f->state == FISH_LEAVING) {
-            /* Head for the exit, then vanish once well off screen */
-            double to_exit = atan2(-10, f->exit_x - f->x);      /* slightly upward toward the exit side */
-            f->turn += remainder(to_exit - f->heading, 2 * M_PI) * 3.0 * dt;
-            if (f->x < -60 || f->x > SIZE + 60) {
-                f->state = FISH_GONE;
-                continue;
-            }
-        } else {
+        {
             if (r < SWIM_R - 20 && (k = nearest_flake(f)) >= 0) {
             /* Chase the nearest flake of our server's food and eat it */
             flake *fl = &flakes[k];
@@ -463,8 +451,8 @@ static void simulate(const stats *s, double dt, double t)
             }
         }
         /* Keep a little distance from other fish */
-        for (int j = 0; j < N_SLOTS; j++) {
-            if (j == i || fishes[j].state == FISH_GONE)
+        for (int j = 0; j < N_FISH; j++) {
+            if (j == i)
                 continue;
             double ex = f->x - fishes[j].x, ey = f->y - fishes[j].y, d = hypot(ex, ey);
             if (d < 50 && d > 0.1) {
@@ -482,13 +470,11 @@ static void simulate(const stats *s, double dt, double t)
         f->y = fmax(SURFACE_Y + 22, fmin(SAND_Y - 14, f->y));
     }
 
-    /* Food: each server's tokens drop out of its feeding ring as flakes */
-    for (int src = 0; src < 2; src++) {
-        flake_acc[src] += fmin(s->tok_port[src], 2000) / TOKENS_PER_FLAKE * dt;
-        while (flake_acc[src] >= 1) {
-            spawn_flake(src);
-            flake_acc[src] -= 1;
-        }
+    /* Food: tokens from every server sprinkle in anywhere on the surface */
+    flake_acc[0] += fmin(s->tok_s, 3000) / TOKENS_PER_FLAKE * dt;
+    while (flake_acc[0] >= 1) {
+        spawn_flake();
+        flake_acc[0] -= 1;
     }
     for (int i = 0; i < MAX_FLAKES; i++) {
         flake *k = &flakes[i];
@@ -558,7 +544,7 @@ typedef struct { double zotac, tuf, tok; } shown_t;
 
 static void draw_fish(cairo_t *cr, const fish *f)
 {
-    rgb col = fish_color(f->src);
+    rgb col = fish_color(f->species);
     rgb dark = lerp(col, (rgb){ 0, 0, 0.1 }, 0.45);
     rgb light = lerp(col, (rgb){ 1, 1, 1 }, 0.45);
     double dir = cos(f->heading) >= 0 ? 1 : -1;
@@ -784,7 +770,7 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t)
         const flake *k = &flakes[i];
         if (!k->alive)
             continue;
-        rgb col = lerp(fish_color(k->src), (rgb){ 1, 0.95, 0.8 }, 0.35);
+        rgb col = flake_color(k->kind);
         double a = k->settled > 0 ? clamp01(1 - (k->settled - 3) / 2) : 1;
         cairo_save(cr);
         cairo_translate(cr, k->x, k->y);
@@ -799,9 +785,8 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t)
         cairo_restore(cr);
     }
 
-    for (int i = 0; i < N_SLOTS; i++)
-        if (fishes[i].state != FISH_GONE)
-            draw_fish(cr, &fishes[i]);
+    for (int i = 0; i < N_FISH; i++)
+        draw_fish(cr, &fishes[i]);
 
     /* Bubbles */
     for (int i = 0; i < MAX_BUBBLES; i++) {
@@ -828,25 +813,6 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t)
     cairo_set_source_rgba(cr, 0.75, 0.95, 1.0, 0.8);
     cairo_stroke(cr);
 
-    /* Floating feeding rings, one per server, bobbing on the surface */
-    for (int src = 0; src < 2; src++) {
-        double rx = c + (src == 0 ? -RING_DX : RING_DX);
-        double ry = SURFACE_Y + 2 + 2 * sin(t * 1.6 + src * 2);
-        rgb col = fish_color(src);
-        cairo_save(cr);
-        cairo_translate(cr, rx, ry);
-        cairo_scale(cr, 1, 0.32);
-        cairo_new_path(cr);
-        cairo_arc(cr, 0, 0, 22, 0, 2 * M_PI);
-        cairo_restore(cr);
-        cairo_set_line_width(cr, 5);
-        set_rgb(cr, lerp(col, (rgb){ 0, 0, 0 }, 0.3));
-        cairo_stroke_preserve(cr);
-        cairo_set_line_width(cr, 2);
-        set_rgb(cr, lerp(col, (rgb){ 1, 1, 1 }, 0.3));
-        cairo_stroke(cr);
-    }
-
     /* Tokens/sec in the air above the water, stats on the sand */
     if (idle) {
         text_center(cr, c, 36, 22, 1, (rgb){ 0.6, 0.75, 0.85 }, 1, "IDLE");
@@ -857,9 +823,9 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t)
     snprintf(txt, sizeof(txt), "%.0f W", total_w);
     text_center(cr, c, SAND_Y + 40, 28, 1, WHITE, 1, txt);
     snprintf(txt, sizeof(txt), "%d\xC2\xB0", s->temp[0]);
-    text_center(cr, c - 44, SAND_Y + 74, 22, 1, fish_color(0), 1, txt);
+    text_center(cr, c - 44, SAND_Y + 74, 22, 1, GPU_BLUE, 1, txt);
     snprintf(txt, sizeof(txt), "%d\xC2\xB0", s->temp[1]);
-    text_center(cr, c + 44, SAND_Y + 74, 22, 1, fish_color(1), 1, txt);
+    text_center(cr, c + 44, SAND_Y + 74, 22, 1, GPU_ORANGE, 1, txt);
 
     /* Glass bowl rim and reflection */
     cairo_new_path(cr);
@@ -917,7 +883,6 @@ int main(int argc, char **argv)
             memset(bubbles, 0, sizeof(bubbles));
             memset(flakes, 0, sizeof(flakes));
             s.tok_port[0] = scenes[k].tok0; s.tok_port[1] = scenes[k].tok1;
-            s.running_port[0] = scenes[k].run0; s.running_port[1] = scenes[k].run1;
             s.tok_s = s.tok_port[0] + s.tok_port[1]; s.running = scenes[k].run0 + scenes[k].run1;
             s.power[0] = scenes[k].w0; s.power[1] = scenes[k].w1; s.temp[0] = 54; s.temp[1] = 71;
             sh.tok = s.tok_s;
@@ -961,9 +926,7 @@ int main(int argc, char **argv)
                 s.tok_port[0] *= 6; s.tok_port[1] *= 6;
                 s.tok_s = s.tok_port[0] + s.tok_port[1];
                 if (s.tok_s < 60) s.tok_s = s.tok_port[0] = s.tok_port[1] = 0;
-                for (int j = 0; j < 2; j++)
-                    s.running_port[j] = s.tok_port[j] < 30 ? 0 : 1 + (int)fmin(SLOTS_PER_SERVER - 1, s.tok_port[j] / 220);
-                s.running = s.running_port[0] + s.running_port[1];
+                s.running = s.tok_s < 1 ? 0 : 1 + (int)(s.tok_s / 250);
             } else {
                 gpus_poll(&s);
                 vllm_poll(&s, t);
