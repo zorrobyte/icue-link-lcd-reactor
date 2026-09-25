@@ -90,8 +90,21 @@ __attribute__((unused)) static rgb heat_color(double t)
 
 /* ---------------------------------------------------------------- LCD */
 
+/*
+ * Set LCD_DUMP_DIR to write every frame as a JPEG into that directory instead of
+ * sending it to the pump (used to make the README GIFs; no device needed).
+ */
+static const char *lcd_dump_dir(void)
+{
+    const char *d = getenv("LCD_DUMP_DIR");
+    return d && *d ? d : NULL;
+}
+
 static int lcd_open(void)
 {
+    if (lcd_dump_dir())
+        return open("/dev/null", O_WRONLY | O_CLOEXEC);
+
     DIR *dir = opendir("/sys/class/hidraw");
     struct dirent *e;
     char path[512], buf[1024];
@@ -120,12 +133,26 @@ static int lcd_open(void)
 
 static void lcd_brightness(int fd, int percent)
 {
+    if (lcd_dump_dir())
+        return;
     unsigned char rep[4] = { 0x03, 0x0B, (unsigned char)percent, 0x01 };
     ioctl(fd, HIDIOCSFEATURE(sizeof(rep)), rep);
 }
 
 static int lcd_send(int fd, const unsigned char *jpeg, unsigned long len)
 {
+    if (lcd_dump_dir()) {
+        static int frame;
+        char path[512];
+        snprintf(path, sizeof(path), "%s/frame_%05d.jpg", lcd_dump_dir(), frame++);
+        FILE *f = fopen(path, "wb");
+        if (f) {
+            fwrite(jpeg, 1, len, f);
+            fclose(f);
+        }
+        return 0;
+    }
+
     unsigned char rep[REPORT_SIZE];
     unsigned long off = 0;
     int idx = 0;
@@ -722,7 +749,10 @@ int main(int argc, char **argv)
         if (t >= next_poll) {
             next_poll = t + 1.0;
             if (demo) {
-                demo_poll(&s, t - t0);
+                /* scale a copy each second; scaling s itself would compound */
+                static stats demo_base;
+                demo_poll(&demo_base, t - t0);
+                s = demo_base;
                 /* demo: scale up so every mood (asleep, brrr, THIS IS FINE) shows up in one cycle */
                 s.tok_port[0] *= 7;
                 s.tok_port[1] *= 7;

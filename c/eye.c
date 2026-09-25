@@ -1,10 +1,13 @@
 /*
- * eye: a giant eyeball stares out of the iCUE LINK AIO pump LCD, watching your LLM.
+ * eye: a dark, spooky eye stares out of the iCUE LINK AIO pump LCD, watching your LLM.
+ * A glowing slit-pupil iris (sickly green, turning blood red with power draw) in a
+ * yellowed eye, black leathery lids and drifting fog.
  *
  * It darts around with saccades that quicken with tokens/sec and lean toward the
  * busier GPU. The pupil dilates with throughput and flinches when a prompt lands
  * after idle, snapping the lids wide open. It blinks, gets drowsy when idle and
- * falls asleep after a while. Power draw makes it bloodshot; past ~1 kW it cries.
+ * falls asleep after a while, leaving a faint glow in the seam of its lids. Power
+ * draw makes it bloodshot; past ~1 kW it weeps blood.
  * Run with --demo to simulate data, --bench to write preview PNGs.
  */
 #define _GNU_SOURCE
@@ -28,7 +31,7 @@
 #include <unistd.h>
 
 #define SIZE            480
-#define FPS             24
+#define FPS             20
 #define REPORT_SIZE     1024
 #define HEADER_SIZE     8
 #define CHUNK_SIZE      (REPORT_SIZE - HEADER_SIZE)
@@ -92,8 +95,21 @@ __attribute__((unused)) static rgb heat_color(double t)
 
 /* ---------------------------------------------------------------- LCD */
 
+/*
+ * Set LCD_DUMP_DIR to write every frame as a JPEG into that directory instead of
+ * sending it to the pump (used to make the README GIFs; no device needed).
+ */
+static const char *lcd_dump_dir(void)
+{
+    const char *d = getenv("LCD_DUMP_DIR");
+    return d && *d ? d : NULL;
+}
+
 static int lcd_open(void)
 {
+    if (lcd_dump_dir())
+        return open("/dev/null", O_WRONLY | O_CLOEXEC);
+
     DIR *dir = opendir("/sys/class/hidraw");
     struct dirent *e;
     char path[512], buf[1024];
@@ -122,12 +138,26 @@ static int lcd_open(void)
 
 static void lcd_brightness(int fd, int percent)
 {
+    if (lcd_dump_dir())
+        return;
     unsigned char rep[4] = { 0x03, 0x0B, (unsigned char)percent, 0x01 };
     ioctl(fd, HIDIOCSFEATURE(sizeof(rep)), rep);
 }
 
 static int lcd_send(int fd, const unsigned char *jpeg, unsigned long len)
 {
+    if (lcd_dump_dir()) {
+        static int frame;
+        char path[512];
+        snprintf(path, sizeof(path), "%s/frame_%05d.jpg", lcd_dump_dir(), frame++);
+        FILE *f = fopen(path, "wb");
+        if (f) {
+            fwrite(jpeg, 1, len, f);
+            fclose(f);
+        }
+        return 0;
+    }
+
     unsigned char rep[REPORT_SIZE];
     unsigned long off = 0;
     int idx = 0;
@@ -295,6 +325,8 @@ static void demo_poll(stats *s, double t)
 
 static double vein_x[N_VEINS][VEIN_PTS], vein_y[N_VEINS][VEIN_PTS], vein_w[N_VEINS];
 static double fiber_a[N_FIBERS], fiber_l[N_FIBERS], fiber_b[N_FIBERS];
+#define N_FOG           7
+static double fog_x[N_FOG], fog_y[N_FOG], fog_r[N_FOG], fog_v[N_FOG];
 
 typedef struct {
     double gx, gy, tx, ty;          /* gaze offset of the iris (px) and saccade target */
@@ -326,6 +358,12 @@ static void init_eye(void)
             vein_y[v][k] = c + r * sin(aa);
         }
         vein_w[v] = 1.0 + frand() * 1.6;
+    }
+    for (int i = 0; i < N_FOG; i++) {
+        fog_x[i] = frand() * SIZE;
+        fog_y[i] = 60 + frand() * 380;
+        fog_r[i] = 90 + frand() * 110;
+        fog_v[i] = 6 + frand() * 10;
     }
     for (int i = 0; i < N_FIBERS; i++) {
         fiber_a[i] = frand() * 2 * M_PI;
@@ -391,6 +429,12 @@ static void simulate(const stats *s, double dt, double t)
         if (E.tear_y > 200)
             E.tear_on = 0;
     }
+
+    for (int i = 0; i < N_FOG; i++) {
+        fog_x[i] += fog_v[i] * dt;
+        if (fog_x[i] - fog_r[i] > SIZE)
+            fog_x[i] = -fog_r[i];
+    }
 }
 
 /* ---------------------------------------------------------------- render */
@@ -405,9 +449,11 @@ static void text_center(cairo_t *cr, double x, double y, double size, int bold, 
     cairo_set_font_size(cr, size);
     cairo_text_extents(cr, s, &ext);
     double tx = x - ext.width / 2 - ext.x_bearing, ty = y - ext.height / 2 - ext.y_bearing;
-    cairo_move_to(cr, tx + 1.5, ty + 1.5);
-    cairo_set_source_rgba(cr, 0.25, 0.10, 0.08, 0.55);
-    cairo_show_text(cr, s);
+    cairo_move_to(cr, tx, ty);
+    cairo_text_path(cr, s);
+    cairo_set_line_width(cr, 5);
+    cairo_set_source_rgba(cr, c.r, c.g, c.b, 0.12);
+    cairo_stroke(cr);
     cairo_move_to(cr, tx, ty);
     set_rgb(cr, c);
     cairo_show_text(cr, s);
@@ -444,7 +490,11 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t)
     double total_w = s->power[0] + s->power[1];
     int tmax = s->temp[0] > s->temp[1] ? s->temp[0] : s->temp[1];
     double bloodshot = clamp01((total_w - 250) / 750) * 0.85 + clamp01((tmax - 60) / 25.0) * 0.15;
-    const rgb SKIN = { 0.91, 0.70, 0.60 }, SKIN_DARK = { 0.72, 0.48, 0.40 };
+    const rgb SKIN = { 0.075, 0.065, 0.085 }, SKIN_DARK = { 0.018, 0.015, 0.025 };
+    double heat = clamp01((total_w - 250) / 750);
+    /* Iris glow: sickly green at rest, blood red when the GPUs are hammered */
+    rgb glow = lerp((rgb){ 0.55, 1.0, 0.25 }, (rgb){ 1.0, 0.12, 0.08 }, heat);
+    double flick = 0.9 + 0.1 * sin(t * 13.0) * sin(t * 3.7);
     char txt[64];
 
     /* Blink closes the lids briefly on top of the current openness */
@@ -459,9 +509,9 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t)
     /* Eyeball: sclera with soft shading */
     {
         cairo_pattern_t *g = cairo_pattern_create_radial(c - 30, c - 40, 30, c, c, SCLERA_R + 10);
-        cairo_pattern_add_color_stop_rgb(g, 0.0, 1.0, 0.99, 0.97);
-        cairo_pattern_add_color_stop_rgb(g, 0.7, 0.93, 0.90, 0.88);
-        cairo_pattern_add_color_stop_rgb(g, 1.0, 0.80, 0.70, 0.68);
+        cairo_pattern_add_color_stop_rgb(g, 0.0, 0.78, 0.74, 0.60);
+        cairo_pattern_add_color_stop_rgb(g, 0.6, 0.55, 0.50, 0.40);
+        cairo_pattern_add_color_stop_rgb(g, 1.0, 0.18, 0.14, 0.12);
         cairo_set_source(cr, g);
         cairo_paint(cr);
         cairo_pattern_destroy(g);
@@ -476,7 +526,7 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t)
         for (int k = 0; k < VEIN_PTS; k++)
             cairo_line_to(cr, vein_x[v][k], vein_y[v][k]);
         cairo_set_line_width(cr, vein_w[v] * (0.7 + 0.8 * bloodshot));
-        cairo_set_source_rgba(cr, 0.80, 0.12, 0.12, a);
+        cairo_set_source_rgba(cr, 0.55, 0.04, 0.04, fmin(1, a * 1.3 + 0.1));
         cairo_stroke(cr);
         /* a small branch */
         int k0 = VEIN_PTS / 3;
@@ -495,12 +545,24 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t)
         cairo_translate(cr, ix, iy);
         cairo_scale(cr, sx, sy);
 
-        cairo_pattern_t *g = cairo_pattern_create_radial(0, 0, E.pupil * 0.8, 0, 0, IRIS_R);
-        cairo_pattern_add_color_stop_rgb(g, 0.00, 0.85, 0.62, 0.22);   /* amber around the pupil */
-        cairo_pattern_add_color_stop_rgb(g, 0.35, 0.40, 0.55, 0.30);
-        cairo_pattern_add_color_stop_rgb(g, 0.75, 0.12, 0.45, 0.50);   /* teal */
-        cairo_pattern_add_color_stop_rgb(g, 0.93, 0.06, 0.22, 0.26);
-        cairo_pattern_add_color_stop_rgb(g, 1.00, 0.02, 0.06, 0.08);   /* limbal ring */
+        /* Glow spilling onto the sclera */
+        cairo_pattern_t *h = cairo_pattern_create_radial(0, 0, IRIS_R * 0.8, 0, 0, IRIS_R * 1.9);
+        cairo_pattern_add_color_stop_rgba(h, 0, glow.r, glow.g, glow.b, 0.45 * flick);
+        cairo_pattern_add_color_stop_rgba(h, 1, glow.r, glow.g, glow.b, 0);
+        cairo_set_operator(cr, CAIRO_OPERATOR_ADD);
+        cairo_arc(cr, 0, 0, IRIS_R * 1.9, 0, 2 * M_PI);
+        cairo_set_source(cr, h);
+        cairo_fill(cr);
+        cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
+        cairo_pattern_destroy(h);
+
+        rgb hot = lerp(glow, (rgb){ 1, 0.95, 0.6 }, 0.6);
+        rgb deep = lerp(glow, (rgb){ 0, 0, 0 }, 0.6);
+        cairo_pattern_t *g = cairo_pattern_create_radial(0, 0, 4, 0, 0, IRIS_R);
+        cairo_pattern_add_color_stop_rgb(g, 0.00, hot.r * flick, hot.g * flick, hot.b * flick);
+        cairo_pattern_add_color_stop_rgb(g, 0.40, glow.r * flick, glow.g * flick, glow.b * flick);
+        cairo_pattern_add_color_stop_rgb(g, 0.85, deep.r, deep.g, deep.b);
+        cairo_pattern_add_color_stop_rgb(g, 1.00, 0.0, 0.0, 0.0);      /* dark limbal ring */
         cairo_arc(cr, 0, 0, IRIS_R, 0, 2 * M_PI);
         cairo_set_source(cr, g);
         cairo_fill(cr);
@@ -509,31 +571,31 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t)
         /* Fibers */
         cairo_set_line_width(cr, 1.3);
         for (int i = 0; i < N_FIBERS; i++) {
-            double a = fiber_a[i], r0 = E.pupil + 2, r1 = r0 + (IRIS_R - 6 - r0) * fiber_l[i];
+            double a = fiber_a[i], r0 = 8, r1 = r0 + (IRIS_R - 6 - r0) * fiber_l[i];
             cairo_move_to(cr, r0 * cos(a), r0 * sin(a));
             cairo_line_to(cr, r1 * cos(a + 0.05), r1 * sin(a + 0.05));
             if (fiber_b[i] > 0.5)
-                cairo_set_source_rgba(cr, 1.0, 0.92, 0.70, 0.22);
+                cairo_set_source_rgba(cr, 1.0, 1.0, 0.8, 0.16);
             else
-                cairo_set_source_rgba(cr, 0.0, 0.08, 0.06, 0.30);
+                cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.35);
             cairo_stroke(cr);
         }
 
-        /* Pupil */
-        cairo_arc(cr, 0, 0, E.pupil, 0, 2 * M_PI);
-        cairo_set_source_rgb(cr, 0.01, 0.01, 0.02);
+        /* Vertical slit pupil, widening with throughput */
+        cairo_save(cr);
+        cairo_scale(cr, (E.pupil - 14) / 70.0 + 0.10, 1);
+        cairo_arc(cr, 0, 0, IRIS_R * 0.86, 0, 2 * M_PI);
+        cairo_restore(cr);
+        cairo_set_source_rgb(cr, 0, 0, 0);
         cairo_fill(cr);
 
         /* Catchlights */
         cairo_save(cr);
         cairo_translate(cr, -IRIS_R * 0.33, -IRIS_R * 0.38);
         cairo_scale(cr, 1.3, 1);
-        cairo_arc(cr, 0, 0, 13, 0, 2 * M_PI);
+        cairo_arc(cr, 0, 0, 7, 0, 2 * M_PI);
         cairo_restore(cr);
-        cairo_set_source_rgba(cr, 1, 1, 1, 0.9);
-        cairo_fill(cr);
-        cairo_arc(cr, IRIS_R * 0.32, IRIS_R * 0.30, 5, 0, 2 * M_PI);
-        cairo_set_source_rgba(cr, 1, 1, 1, 0.55);
+        cairo_set_source_rgba(cr, 0.85, 0.95, 1.0, 0.55);
         cairo_fill(cr);
         cairo_restore(cr);
     }
@@ -542,13 +604,13 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t)
     cairo_save(cr);
     cairo_new_path(cr);
     upper_lid_path(cr, up_c + 22);
-    cairo_set_line_width(cr, 46);
-    cairo_set_source_rgba(cr, 0.35, 0.18, 0.15, 0.22);
+    cairo_set_line_width(cr, 70);
+    cairo_set_source_rgba(cr, 0, 0, 0, 0.55);
     cairo_stroke(cr);
     cairo_new_path(cr);
     lower_lid_path(cr, lo_c - 10);
-    cairo_set_line_width(cr, 20);
-    cairo_set_source_rgba(cr, 0.35, 0.18, 0.15, 0.15);
+    cairo_set_line_width(cr, 36);
+    cairo_set_source_rgba(cr, 0, 0, 0, 0.45);
     cairo_stroke(cr);
     cairo_restore(cr);
 
@@ -569,8 +631,8 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t)
         cairo_new_path(cr);
         cairo_move_to(cr, 60, CORNER_Y - 20);
         cairo_curve_to(cr, 150, up_c - 55, 330, up_c - 55, 420, CORNER_Y - 20);
-        cairo_set_line_width(cr, 3);
-        cairo_set_source_rgba(cr, 0.55, 0.32, 0.26, 0.45);
+        cairo_set_line_width(cr, 2);
+        cairo_set_source_rgba(cr, 0.20, 0.17, 0.22, 0.5);
         cairo_stroke(cr);
     }
 
@@ -593,20 +655,20 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t)
     /* Lid rims */
     cairo_new_path(cr);
     upper_lid_path(cr, up_c);
-    cairo_set_line_width(cr, 4);
-    cairo_set_source_rgb(cr, 0.35, 0.16, 0.13);
+    cairo_set_line_width(cr, 3);
+    cairo_set_source_rgb(cr, 0.16, 0.14, 0.18);
     cairo_stroke(cr);
     cairo_new_path(cr);
     lower_lid_path(cr, lo_c);
-    cairo_set_line_width(cr, 2.5);
-    cairo_set_source_rgba(cr, 0.60, 0.30, 0.26, 0.8);
+    cairo_set_line_width(cr, 2);
+    cairo_set_source_rgba(cr, 0.20, 0.17, 0.22, 0.8);
     cairo_stroke(cr);
 
     /* Lashes along the upper lid, pointing down when shut */
     {
         double lash_dir = open < 0.08 ? 1 : -1;
         cairo_set_line_width(cr, 2.2);
-        cairo_set_source_rgb(cr, 0.10, 0.05, 0.04);
+        cairo_set_source_rgb(cr, 0.03, 0.02, 0.04);
         for (int i = 1; i < 24; i++) {
             double u = i / 24.0;
             /* Point on the bezier from (34,CORNER_Y) to (446,CORNER_Y) with control y = up_c */
@@ -628,23 +690,54 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t)
         cairo_move_to(cr, tx, ty - 9);
         cairo_curve_to(cr, tx + 6, ty - 1, tx + 6, ty + 6, tx, ty + 6);
         cairo_curve_to(cr, tx - 6, ty + 6, tx - 6, ty - 1, tx, ty - 9);
-        cairo_set_source_rgba(cr, 0.75, 0.90, 1.0, 0.75);
+        cairo_set_source_rgba(cr, 0.55, 0.02, 0.03, 0.95);
         cairo_fill(cr);
-        cairo_arc(cr, tx - 1.5, ty + 1, 1.6, 0, 2 * M_PI);
-        cairo_set_source_rgba(cr, 1, 1, 1, 0.9);
+        cairo_arc(cr, tx - 1.5, ty + 1, 1.4, 0, 2 * M_PI);
+        cairo_set_source_rgba(cr, 1, 0.5, 0.5, 0.6);
         cairo_fill(cr);
+        /* the trail it leaves */
+        cairo_move_to(cr, 44, CORNER_Y + 8);
+        cairo_line_to(cr, tx, ty - 6);
+        cairo_set_line_width(cr, 2.5);
+        cairo_set_source_rgba(cr, 0.45, 0.02, 0.03, 0.6);
+        cairo_stroke(cr);
     }
 
     /* Sleeping */
     if (open < 0.05) {
-        cairo_select_font_face(cr, "DejaVu Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
-        for (int i = 0; i < 3; i++) {
-            double ph = fmod(t * 0.5 + i / 3.0, 1.0);
-            cairo_set_font_size(cr, 16 + ph * 22);
-            cairo_move_to(cr, 300 + ph * 60, 190 - ph * 110);
-            cairo_set_source_rgba(cr, 0.35, 0.16, 0.13, 1 - ph);
-            cairo_show_text(cr, "Z");
-        }
+        /* A faint glow leaking through the seam of the closed lids */
+        double breathe = 0.35 + 0.25 * sin(t * 0.8);
+        cairo_new_path(cr);
+        cairo_move_to(cr, 150, CORNER_Y - 1);
+        cairo_line_to(cr, 330, CORNER_Y - 1);
+        cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+        cairo_set_line_width(cr, 10);
+        cairo_set_source_rgba(cr, glow.r, glow.g, glow.b, 0.10 * breathe);
+        cairo_stroke_preserve(cr);
+        cairo_set_line_width(cr, 2);
+        cairo_set_source_rgba(cr, glow.r, glow.g, glow.b, 0.6 * breathe);
+        cairo_stroke(cr);
+    }
+
+    /* Fog drifting across everything */
+    for (int i = 0; i < N_FOG; i++) {
+        cairo_pattern_t *g = cairo_pattern_create_radial(fog_x[i], fog_y[i], 0, fog_x[i], fog_y[i], fog_r[i]);
+        cairo_pattern_add_color_stop_rgba(g, 0, 0.45, 0.45, 0.55, 0.07);
+        cairo_pattern_add_color_stop_rgba(g, 1, 0.45, 0.45, 0.55, 0);
+        cairo_set_source(cr, g);
+        cairo_arc(cr, fog_x[i], fog_y[i], fog_r[i], 0, 2 * M_PI);    /* only touch the wisp's own area */
+        cairo_fill(cr);
+        cairo_pattern_destroy(g);
+    }
+
+    /* Deep vignette at the rim */
+    {
+        cairo_pattern_t *v = cairo_pattern_create_radial(c, c, 150, c, c, 245);
+        cairo_pattern_add_color_stop_rgba(v, 0, 0, 0, 0, 0);
+        cairo_pattern_add_color_stop_rgba(v, 1, 0, 0, 0, 0.85);
+        cairo_set_source(cr, v);
+        cairo_paint(cr);
+        cairo_pattern_destroy(v);
     }
 
     /* Stats on the cheek */
@@ -652,13 +745,13 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t)
         snprintf(txt, sizeof(txt), "idle");
     else
         snprintf(txt, sizeof(txt), "%.0f tok/s", sh->tok);
-    text_center(cr, c, 424, 24, 1, (rgb){ 1, 0.97, 0.94 }, txt);
+    text_center(cr, c, 408, 26, 1, (rgb){ 0.70, 0.72, 0.78 }, txt);
     snprintf(txt, sizeof(txt), "%.0f W", total_w);
-    text_center(cr, c, 452, 17, 1, (rgb){ 1, 0.95, 0.9 }, txt);
+    text_center(cr, c, 440, 19, 1, (rgb){ 0.60, 0.62, 0.68 }, txt);
     snprintf(txt, sizeof(txt), "%d\xC2\xB0", s->temp[0]);
-    text_center(cr, c - 58, 450, 17, 1, (rgb){ 0.20, 0.45, 0.95 }, txt);
+    text_center(cr, c - 64, 438, 19, 1, (rgb){ 0.30, 0.50, 0.90 }, txt);
     snprintf(txt, sizeof(txt), "%d\xC2\xB0", s->temp[1]);
-    text_center(cr, c + 58, 450, 17, 1, (rgb){ 0.95, 0.45, 0.10 }, txt);
+    text_center(cr, c + 64, 438, 19, 1, (rgb){ 0.90, 0.45, 0.15 }, txt);
 }
 
 /* ---------------------------------------------------------------- main */
@@ -743,7 +836,10 @@ int main(int argc, char **argv)
         if (t >= next_poll) {
             next_poll = t + 1.0;
             if (demo) {
-                demo_poll(&s, t - t0);
+                /* scale a copy each second; scaling s itself would compound */
+                static stats demo_base;
+                demo_poll(&demo_base, t - t0);
+                s = demo_base;
                 s.tok_port[0] *= 6; s.tok_port[1] *= 6;
                 s.tok_s = s.tok_port[0] + s.tok_port[1];
                 if (s.tok_s < 150) { s.tok_s = s.tok_port[0] = s.tok_port[1] = 0; s.running = 0; }
