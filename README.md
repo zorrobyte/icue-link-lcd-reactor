@@ -20,6 +20,11 @@ Built for a dual RTX 5090 box running two vLLM servers (one per GPU), but the GP
 <td align="center"><img src="docs/gif/thirst.gif" width="240"><br><b>thirst</b></td>
 <td align="center"><img src="docs/gif/reactor.gif" width="240"><br><b>reactor</b></td>
 </tr>
+<tr>
+<td></td>
+<td align="center"><img src="docs/gif/tears.gif" width="240"><br><b>tears</b></td>
+<td></td>
+</tr>
 </table>
 
 The GIFs are recorded from each display's `--demo` mode (simulated data), `brrr` from its `--showcase` loop.
@@ -27,7 +32,7 @@ The GIFs are recorded from each display's `--demo` mode (simulated data), `brrr`
 ## Contents
 
 - [Quick start](#quick-start)
-- [Displays](#displays): [brrr](#brrr) · [horizon](#horizon) · [plasma](#plasma) · [fishbowl](#fishbowl) · [autumn](#autumn) · [thirst](#thirst) · [singularity](#singularity) · [synapse](#synapse) · [reactor](#reactor)
+- [Displays](#displays): [brrr](#brrr) · [horizon](#horizon) · [plasma](#plasma) · [fishbowl](#fishbowl) · [autumn](#autumn) · [thirst](#thirst) · [tears](#tears) · [singularity](#singularity) · [synapse](#synapse) · [reactor](#reactor)
 - [Configuration](#configuration)
 - [Command line and environment](#command-line-and-environment)
 - [Performance](#performance)
@@ -207,6 +212,30 @@ The litres figure is an estimate, not a measurement. It uses Li et al. 2023, [*M
 
 ---
 
+### tears
+
+<img src="docs/tears.png" width="480" align="right">
+
+A close-up sequel to `thirst`, in a storybook style: a GPU robot holds a glass to a child's cheek and collects their tears.
+
+| On screen | Driven by |
+|---|---|
+| Tears welling up and rolling down the cheek | total tok/s: one tear per 26 tokens, up to 8 a second; beyond that the wet stream gets wider and brighter |
+| The child's mood: smiling, frowning, trembling pout, squeezed-shut wailing | a fading memory of recent tokens (about a minute): sustained load makes the child sadder, idle lets them recover |
+| Room light, warm lamplight to cold blue | the child's mood |
+| Robot arm raising the glass to the jaw | tokens flowing; it lowers when idle |
+| Glass pulled back and slurped through a straw, "SLURP" | the glass is full (24 caught tears) |
+| Tears landing on the sweater | tears that fall while the glass is away |
+| Robot's fan eyes spinning, antenna blinking | total tok/s |
+| "mL of tears" counter | the same datacenter-equivalent estimate as `thirst` (`ML_PER_TOKEN`) |
+| Bottom | total tok/s, total watts |
+
+The GIF above is a 4x time-lapse of about 70 seconds of `--demo`, so the whole mood arc fits. Backdrop cached per mood level, 20 fps busy, 8 idle, about 2 ms per frame. `SADNESS_TAU`, `SADNESS_FULL` and `TOKENS_PER_TEAR` are in `c/tears.c`.
+
+<br clear="right">
+
+---
+
 ### singularity
 
 <img src="docs/singularity.png" width="480" align="right">
@@ -315,6 +344,7 @@ Render + JPEG encode per frame under heavy load on a Ryzen 9 9950X3D, from `--be
 | `autumn` | ~2.5 ms | 20 / 6 |
 | `reactor` | ~1.7 ms | 12 / 6 |
 | `thirst` | ~0.7 ms | 20 / 8 |
+| `tears` | ~2 ms | 20 / 8 |
 | `fishbowl` | ~2.1 ms | 24 / 12 |
 | `singularity` | ~2.1 ms | 24 / 8 |
 | `brrr` | ~2.3 ms | 20 / 8 (30 in showcase) |
