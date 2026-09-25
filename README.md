@@ -12,13 +12,13 @@ Built for a dual RTX 5090 box running two vLLM servers (one per GPU), but the GP
 </tr>
 <tr>
 <td align="center"><img src="docs/gif/fishbowl.gif" width="240"><br><b>fishbowl</b></td>
-<td align="center"><img src="docs/gif/eye.gif" width="240"><br><b>eye</b></td>
 <td align="center"><img src="docs/gif/singularity.gif" width="240"><br><b>singularity</b></td>
+<td align="center"><img src="docs/gif/synapse.gif" width="240"><br><b>synapse</b></td>
 </tr>
 <tr>
-<td align="center"><img src="docs/gif/synapse.gif" width="240"><br><b>synapse</b></td>
+<td></td>
 <td align="center"><img src="docs/gif/reactor.gif" width="240"><br><b>reactor</b></td>
-<td align="center"><img src="docs/gif/brrr_classic.gif" width="240"><br><b>brrr_classic</b></td>
+<td></td>
 </tr>
 </table>
 
@@ -27,7 +27,7 @@ The GIFs are recorded from each display's `--demo` mode (simulated data), `brrr`
 ## Contents
 
 - [Quick start](#quick-start)
-- [Displays](#displays): [brrr](#brrr) · [horizon](#horizon) · [plasma](#plasma) · [fishbowl](#fishbowl) · [eye](#eye) · [singularity](#singularity) · [synapse](#synapse) · [reactor](#reactor) · [brrr_classic](#brrr_classic)
+- [Displays](#displays): [brrr](#brrr) · [horizon](#horizon) · [plasma](#plasma) · [fishbowl](#fishbowl) · [singularity](#singularity) · [synapse](#synapse) · [reactor](#reactor)
 - [Configuration](#configuration)
 - [Command line and environment](#command-line-and-environment)
 - [Performance](#performance)
@@ -163,31 +163,6 @@ Six fish of different sizes (blue tang, two goldfish, yellow tang, red, purple) 
 
 ---
 
-### eye
-
-<img src="docs/eye.png" width="480" align="right">
-
-A dark, spooky eye stares out of your PC.
-
-| On screen | Driven by |
-|---|---|
-| Iris glow colour | total GPU power: sickly green at rest to blood red flat out |
-| Slit pupil width | total tok/s |
-| Where it looks | saccades that get quicker with tok/s, biased toward the busier GPU |
-| Lids snap wide, pupil flinches | a prompt arriving after idle |
-| Blinks | every few seconds while awake |
-| Drowsy, heavy lids | idle |
-| Closed, a faint glow in the seam | idle for **20 seconds** |
-| Bloodshot veins | total GPU power, from 250 W to 1000 W, plus hottest GPU temp |
-| Blood tear | total GPU power above **1000 W** |
-| Bottom | total tok/s, total watts, GPU temps |
-
-Yellowed sclera, black lids, drifting fog and a deep vignette. `IDLE_SLEEP_S` in `c/eye.c` sets how long before it sleeps. 20 fps.
-
-<br clear="right">
-
----
-
 ### singularity
 
 <img src="docs/singularity.png" width="480" align="right">
@@ -254,11 +229,6 @@ The lightest display (about 2% of a core). 12 fps.
 
 <br clear="right">
 
----
-
-### brrr_classic
-
-The first, plainer version of `brrr`: a flat pixel llama on a grey hamster wheel with the same "GPU GO BRRR" caption, sweat, flames and WEN PROMPT? moods, but no synthwave scene, shades or AGI caption. Kept for anyone who prefers it. 20 fps.
 
 ## Configuration
 
@@ -273,7 +243,6 @@ Everything is a constant at the top of each `c/*.c` file:
 | `SLOTS_PER_SERVER` | `4` | plasma | vLLM `--max-num-seqs` per server |
 | `SWEAT_TOK`, `SHADES_TOK`, `HOT_TOK`, `AGI_TOK` | 500, 800, 1200, 2000 | brrr | mood thresholds in tok/s |
 | `MAX_WORDS_PER_S` | `14` | horizon | legible words per second |
-| `IDLE_SLEEP_S` | `20` s | eye | idle time before it falls asleep |
 
 ## Command line and environment
 
@@ -306,7 +275,6 @@ Render + JPEG encode per frame on a Ryzen 9 9950X3D, from `--bench`:
 | `brrr` | ~8.5 ms | 20 (30 in showcase) | ~17% (estimated) |
 | `plasma` | ~3 to 6 ms | 24 | ~10% (estimated) |
 | `fishbowl` | ~2 to 5.5 ms | 24 | ~10% (estimated) |
-| `eye` | ~7 to 8 ms | 20 | ~15% (estimated) |
 | `reactor` (Python prototype) | ~12 ms | 12 | ~15% |
 
 Most of the cost is cairo drawing; JPEG encoding with libjpeg-turbo is well under a millisecond.
