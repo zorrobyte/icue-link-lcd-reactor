@@ -62,6 +62,36 @@ typedef struct {
 static volatile sig_atomic_t stop;
 static int demo;
 
+/*
+ * Data source. By default the display is driven by vLLM tokens/sec. With
+ * LLM_REACTOR_SOURCE=gpu in the environment (or --gpu-load) it is driven by GPU
+ * activity instead: each GPU's load is mapped onto the same range the display
+ * expects (GPU_FULL_RATE "tok/s" at 100%), so it works for any GPU workload, and the
+ * text shows GPU % instead of tok/s. Activity is half utilisation, half power draw
+ * between GPU_IDLE_W and GPU_MAX_W: utilisation alone can sit at 100% while the card
+ * is barely working, the watts show how hard it really is.
+ */
+#define GPU_FULL_RATE   900.0
+#define GPU_IDLE_W      40.0        /* board power at idle */
+#define GPU_MAX_W       575.0       /* board power limit */
+static int gpu_source;
+
+/* Numbers as shown on screen: tok/s, or GPU activity % in GPU mode */
+__attribute__((unused)) static double shown_rate(double tok)        /* totals: average % */
+{
+    return gpu_source ? fmin(100, tok / (N_GPUS * GPU_FULL_RATE) * 100) : tok;
+}
+__attribute__((unused)) static double shown_gpu_rate(double tok)    /* one GPU */
+{
+    return gpu_source ? fmin(100, tok / GPU_FULL_RATE * 100) : tok;
+}
+
+/* Units to match: on their own, upper case, spelled out, and right after a number */
+__attribute__((unused)) static const char *rate_unit(void) { return gpu_source ? "% GPU" : "tok/s"; }
+__attribute__((unused)) static const char *rate_unit_uc(void) { return gpu_source ? "% GPU" : "TOK/S"; }
+__attribute__((unused)) static const char *rate_unit_long(void) { return gpu_source ? "GPU LOAD %" : "TOKENS / SEC"; }
+__attribute__((unused)) static const char *rate_suffix(void) { return gpu_source ? "% GPU" : " tok/s"; }
+
 static void on_signal(int sig) { (void)sig; stop = 1; }
 
 static double now_s(void)
@@ -292,6 +322,25 @@ static void vllm_poll(stats *s, double t)
     s->running = running;
 }
 
+/*
+ * GPU mode: turn each GPU's activity (see GPU_FULL_RATE) into a token rate and a
+ * running-request count, so the display's thresholds and idle detection just work.
+ */
+static void gpu_rate_poll(stats *s)
+{
+    s->tok_s = 0;
+    s->running = 0;
+    for (int i = 0; i < N_GPUS; i++) {
+        double pw = clamp01((s->power[i] - GPU_IDLE_W) / (GPU_MAX_W - GPU_IDLE_W));
+        double a = 0.5 * clamp01(s->load[i]) + 0.5 * pw;
+        if (a < 0.03)                   /* no idle jitter */
+            a = 0;
+        s->tok_port[i] = a * GPU_FULL_RATE;
+        s->tok_s += a * GPU_FULL_RATE;
+        s->running += a > 0.05;
+    }
+}
+
 static void demo_poll(stats *s, double t)
 {
     double busy = 0.5 + 0.5 * sin(t * 0.25);
@@ -382,7 +431,7 @@ static cairo_surface_t *rim_cache;        /* the wheel's static rings and hub */
 static cairo_surface_t *hud_cache;        /* all text; redrawn only when it changes */
 static int scene_key = -1;
 static char hud_key[512];
-#define FPS_IDLE        8
+#define FPS_IDLE        15
 
 static double frand(void) { return rand() / (double)RAND_MAX; }
 
@@ -972,10 +1021,10 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t)
     static double hud_tok, hud_w, hud_p0, hud_p1, hud_next;
     if (t >= hud_next || t < hud_next - 1) {
         hud_next = t + 0.25;
-        hud_tok = tok;
+        hud_tok = shown_rate(tok);
         hud_w = total_w;
-        hud_p0 = s->tok_port[0];
-        hud_p1 = s->tok_port[1];
+        hud_p0 = shown_gpu_rate(s->tok_port[0]);
+        hud_p1 = shown_gpu_rate(s->tok_port[1]);
     }
 
     typedef struct { double x, y, size, max_w; rgb fill, glow; char str[32]; } hud_item;
@@ -985,10 +1034,10 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t)
         snprintf(items[n].str, sizeof(items[n].str), __VA_ARGS__); n++; } while (0)
 
     if (asleep) {
-        HUD(c, 176, 38, 220, ((rgb){ 0.6, 0.6, 0.75 }), NEON_CYAN, "0 TOK/S");
+        HUD(c, 176, 38, 220, ((rgb){ 0.6, 0.6, 0.75 }), NEON_CYAN, "0%s", gpu_source ? "% GPU" : " TOK/S");
     } else {
         HUD(c, 176, 76, 240, WHITE, NEON_PINK, "%.0f", hud_tok);
-        HUD(c, 224, 22, 120, NEON_CYAN, NEON_CYAN, "TOK/S");
+        HUD(c, 224, 22, 120, NEON_CYAN, NEON_CYAN, "%s", rate_unit_uc());
     }
 
     /* Caption: long ones go on two lines so they stay big on a round screen */
@@ -1026,7 +1075,7 @@ static void render(cairo_t *cr, const stats *s, const shown_t *sh, double t)
         }
     }
 
-    /* Bottom: each server's tok/s either side of total watts */
+    /* Bottom: each server's tok/s (or GPU %) either side of total watts */
     HUD(c, 428, 30, 110, WHITE, NEON_PINK, "%.0fW", hud_w);
     HUD(c - 96, 400, 30, 90, BLUE, BLUE, "%.0f", hud_p0);
     HUD(c + 96, 400, 30, 90, ORANGE, ORANGE, "%.0f", hud_p1);
@@ -1119,8 +1168,12 @@ int main(int argc, char **argv)
     int fd = -1, bench = 0, showcase = 0;
     double fps = FPS;
 
+    const char *source = getenv("LLM_REACTOR_SOURCE");
+    gpu_source = source && !strcasecmp(source, "gpu");
     for (int i = 1; i < argc; i++) {
-        if (!strcmp(argv[i], "--demo"))
+        if (!strcmp(argv[i], "--gpu-load"))
+            gpu_source = 1;
+        else if (!strcmp(argv[i], "--demo"))
             demo = 1;
         else if (!strcmp(argv[i], "--showcase"))
             showcase = demo = 1, fps = 30;
@@ -1212,7 +1265,10 @@ int main(int argc, char **argv)
                 if (s.tok_s < 150) { s.tok_s = s.tok_port[0] = s.tok_port[1] = 0; s.running = 0; }
             } else {
                 gpus_poll(&s);
-                vllm_poll(&s, t);
+                if (gpu_source)
+                    gpu_rate_poll(&s);
+                else
+                    vllm_poll(&s, t);
             }
         }
 

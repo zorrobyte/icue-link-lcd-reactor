@@ -63,6 +63,36 @@ typedef struct {
 static volatile sig_atomic_t stop;
 static int demo;
 
+/*
+ * Data source. By default the display is driven by vLLM tokens/sec. With
+ * LLM_REACTOR_SOURCE=gpu in the environment (or --gpu-load) it is driven by GPU
+ * activity instead: each GPU's load is mapped onto the same range the display
+ * expects (GPU_FULL_RATE "tok/s" at 100%), so it works for any GPU workload, and the
+ * text shows GPU % instead of tok/s. Activity is half utilisation, half power draw
+ * between GPU_IDLE_W and GPU_MAX_W: utilisation alone can sit at 100% while the card
+ * is barely working, the watts show how hard it really is.
+ */
+#define GPU_FULL_RATE   900.0
+#define GPU_IDLE_W      40.0        /* board power at idle */
+#define GPU_MAX_W       575.0       /* board power limit */
+static int gpu_source;
+
+/* Numbers as shown on screen: tok/s, or GPU activity % in GPU mode */
+__attribute__((unused)) static double shown_rate(double tok)        /* totals: average % */
+{
+    return gpu_source ? fmin(100, tok / (N_GPUS * GPU_FULL_RATE) * 100) : tok;
+}
+__attribute__((unused)) static double shown_gpu_rate(double tok)    /* one GPU */
+{
+    return gpu_source ? fmin(100, tok / GPU_FULL_RATE * 100) : tok;
+}
+
+/* Units to match: on their own, upper case, spelled out, and right after a number */
+__attribute__((unused)) static const char *rate_unit(void) { return gpu_source ? "% GPU" : "tok/s"; }
+__attribute__((unused)) static const char *rate_unit_uc(void) { return gpu_source ? "% GPU" : "TOK/S"; }
+__attribute__((unused)) static const char *rate_unit_long(void) { return gpu_source ? "GPU LOAD %" : "TOKENS / SEC"; }
+__attribute__((unused)) static const char *rate_suffix(void) { return gpu_source ? "% GPU" : " tok/s"; }
+
 static void on_signal(int sig) { (void)sig; stop = 1; }
 
 static double now_s(void)
@@ -293,6 +323,26 @@ static void vllm_poll(stats *s, double t)
         have[i] = 1;
     }
     s->running = running;
+}
+
+/*
+ * GPU mode: turn each GPU's activity (see GPU_FULL_RATE) into a token rate and a
+ * running-request count, so the display's thresholds and idle detection just work.
+ */
+static void gpu_rate_poll(stats *s)
+{
+    s->tok_s = 0;
+    s->running = 0;
+    for (int i = 0; i < N_GPUS; i++) {
+        double pw = clamp01((s->power[i] - GPU_IDLE_W) / (GPU_MAX_W - GPU_IDLE_W));
+        double a = 0.5 * clamp01(s->load[i]) + 0.5 * pw;
+        if (a < 0.03)                   /* no idle jitter */
+            a = 0;
+        s->tok_port[i] = a * GPU_FULL_RATE;
+        s->running_port[i] = a > 0.05 ? (int)ceil(a * 4) : 0;
+        s->tok_s += a * GPU_FULL_RATE;
+        s->running += a > 0.05;
+    }
 }
 
 static void demo_poll(stats *s, double t)
@@ -684,7 +734,7 @@ static void draw_snail(cairo_t *cr, double x, double t)
 
 /* Static parts (water, sand, pebbles, bubbler; glass rim) are cached, and the text is a
  * cached layer redrawn only when it changes. Idle drops the frame rate. */
-#define FPS_IDLE        12
+#define FPS_IDLE        15
 static cairo_surface_t *bg_cache, *fg_cache, *hud_cache;
 static char hud_key[256];
 
@@ -770,7 +820,7 @@ static void update_hud(const stats *s, const shown_t *sh, double t)
 
     if (t >= next || t < next - 1) {
         next = t + 0.25;
-        tok = sh->tok;
+        tok = shown_rate(sh->tok);
         watts = s->power[0] + s->power[1];
     }
     snprintf(key, sizeof(key), "%d|%.0f|%.0f|%d|%d", idle, tok, watts, s->temp[0], s->temp[1]);
@@ -786,7 +836,7 @@ static void update_hud(const stats *s, const shown_t *sh, double t)
     if (idle) {
         text_center(cr, c, 36, 22, 1, (rgb){ 0.6, 0.75, 0.85 }, 1, "IDLE");
     } else {
-        snprintf(txt, sizeof(txt), "%.0f tok/s", tok);
+        snprintf(txt, sizeof(txt), "%.0f%s", tok, rate_suffix());
         text_center(cr, c, 36, 28, 1, WHITE, 1, txt);
     }
     snprintf(txt, sizeof(txt), "%.0f W", watts);
@@ -951,8 +1001,12 @@ int main(int argc, char **argv)
     double last, next_poll = 0, t0;
     int fd = -1, bench = 0;
 
+    const char *source = getenv("LLM_REACTOR_SOURCE");
+    gpu_source = source && !strcasecmp(source, "gpu");
     for (int i = 1; i < argc; i++) {
-        if (!strcmp(argv[i], "--demo"))
+        if (!strcmp(argv[i], "--gpu-load"))
+            gpu_source = 1;
+        else if (!strcmp(argv[i], "--demo"))
             demo = 1;
         else if (!strcmp(argv[i], "--bench"))
             bench = 1;
@@ -1030,7 +1084,10 @@ int main(int argc, char **argv)
                 s.running = s.tok_s < 1 ? 0 : 1 + (int)(s.tok_s / 250);
             } else {
                 gpus_poll(&s);
-                vllm_poll(&s, t);
+                if (gpu_source)
+                    gpu_rate_poll(&s);
+                else
+                    vllm_poll(&s, t);
             }
         }
 

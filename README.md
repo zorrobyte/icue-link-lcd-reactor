@@ -192,7 +192,7 @@ A layered autumn valley at golden hour where the falling maple leaves are your t
 | The odd stray leaf | idle |
 | Text on the foreground | total tok/s (or "quiet"), total watts, GPU 0 temp (gold), GPU 1 temp (red) |
 
-The sky, sun, hills and branches never change, so they are drawn once at startup and cached; each frame only draws the falling leaves and text. It runs at 20 fps while leaves are falling and drops to 6 fps when idle. The cheapest display after `reactor`: about 4% of a core under full load. `TOKENS_PER_LEAF`, `FPS_BUSY` and `FPS_IDLE` are in `c/autumn.c`.
+The sky, sun, hills and branches never change, so they are drawn once at startup and cached; each frame only draws the falling leaves and text. It runs at 20 fps while leaves are falling and drops to 15 fps when idle. The cheapest display after `reactor`: about 4% of a core under full load. `TOKENS_PER_LEAF`, `FPS_BUSY` and `FPS_IDLE` are in `c/autumn.c`.
 
 <br clear="right">
 
@@ -216,7 +216,7 @@ Two GPUs chase kids to steal their water. A satire of AI datacenters' water use.
 | Litres counter | **datacenter-equivalent** water for the tokens generated since the display started |
 | Bottom | total tok/s, total watts |
 
-The litres figure is an estimate, not a measurement. It uses Li et al. 2023, [*Making AI Less Thirsty*](https://arxiv.org/abs/2304.03271), which puts GPT-3 at roughly 500 mL of water per 10 to 50 medium-length responses; with 30 responses of about 300 tokens that is about 0.056 mL per token (`ML_PER_TOKEN` in `c/thirst.c`). A home rig with a closed liquid loop like this one uses no water at all, which is rather the point. Cached background, 20 fps busy, 8 idle, well under 1 ms per frame.
+The litres figure is an estimate, not a measurement. It uses Li et al. 2023, [*Making AI Less Thirsty*](https://arxiv.org/abs/2304.03271), which puts GPT-3 at roughly 500 mL of water per 10 to 50 medium-length responses; with 30 responses of about 300 tokens that is about 0.056 mL per token (`ML_PER_TOKEN` in `c/thirst.c`). A home rig with a closed liquid loop like this one uses no water at all, which is rather the point. Cached background, 20 fps busy, 15 idle, well under 1 ms per frame.
 
 <br clear="right">
 
@@ -240,7 +240,7 @@ A close-up sequel to `thirst`, in a storybook style: a GPU robot holds a glass t
 | "mL of tears" counter | the same datacenter-equivalent estimate as `thirst` (`ML_PER_TOKEN`) |
 | Bottom | total tok/s, total watts |
 
-The GIF above is a 4x time-lapse of about 70 seconds of `--demo`, so the whole mood arc fits. Backdrop cached per mood level, 20 fps busy, 8 idle, about 2 ms per frame. `SADNESS_TAU`, `SADNESS_FULL` and `TOKENS_PER_TEAR` are in `c/tears.c`.
+The GIF above is a 4x time-lapse of about 70 seconds of `--demo`, so the whole mood arc fits. Backdrop cached per mood level, 20 fps busy, 15 idle, about 2 ms per frame. `SADNESS_TAU`, `SADNESS_FULL` and `TOKENS_PER_TEAR` are in `c/tears.c`.
 
 <br clear="right">
 
@@ -283,7 +283,7 @@ A koi pond fed by your LLM, using AI-generated art: the pond painting and both k
 | Koi drifting slowly | idle |
 | Text | total tok/s (or "still water"), total watts |
 
-The sprites are top-down, so they rotate cleanly; to make them swim instead of slide, each fish is cut into strips that are shifted by a travelling wave growing toward the tail, built upright in a scratch surface and then rotated onto the pond in one paint. About 3 ms per frame, 20 fps busy, 10 idle. `make install` copies the assets next to the binary, where `koi` looks for them (it also finds them in `./assets/koi` when run from `c/`).
+The sprites are top-down, so they rotate cleanly; to make them swim instead of slide, each fish is cut into strips that are shifted by a travelling wave growing toward the tail, built upright in a scratch surface and then rotated onto the pond in one paint. About 3 ms per frame, 20 fps busy, 15 idle. `make install` copies the assets next to the binary, where `koi` looks for them (it also finds them in `./assets/koi` when run from `c/`).
 
 <br clear="right">
 
@@ -316,7 +316,7 @@ GPU FIGHTER II TURBO HYPER INFERENCE EDITION. Your two graphics cards are 16-bit
 
 `--showcase` plays a scripted 44 second fight at 30 fps: asleep, ROUND n, ZOTAC slapping a sleeping TUF, fireballs, beam struggle, both going Super Saiyan, ultra, 900 W, TOASTY, K.O. and the winner. The GIF is this loop at 2x speed.
 
-The stage and the llama were made with an image model (`c/assets/kombat/`); the fighters, beams and effects are drawn with cairo. The HUD is cached and redrawn at most 4 times a second. About 3 ms per frame at full chaos, 1.4 ms idle; 20 fps busy, 8 when everyone is asleep. Needs the Anton font. Thresholds are `TOK_PER_FIREBALL`, `BEAM_TOK`, `SUPER_TOK`, `SHAKE_TOK`, `ULTRA_TOK`, `OVER_W`, `SMOKE_W` and `TOASTY_C` in `c/kombat.c`.
+The stage and the llama were made with an image model (`c/assets/kombat/`); the fighters, beams and effects are drawn with cairo. The HUD is cached and redrawn at most 4 times a second. About 3 ms per frame at full chaos, 1.4 ms idle; 20 fps busy, 15 when everyone is asleep. Needs the Anton font. Thresholds are `TOK_PER_FIREBALL`, `BEAM_TOK`, `SUPER_TOK`, `SHAKE_TOK`, `ULTRA_TOK`, `OVER_W`, `SMOKE_W` and `TOASTY_C` in `c/kombat.c`.
 
 <br clear="right">
 
@@ -342,7 +342,7 @@ A strawberry is asked "how many r's in STRAWBERRY?" and overthinks it at your re
 
 Stages change with hysteresis and at most once a second, and the shaking and red glow ease in, so nothing flickers. `--showcase` plays a scripted 42 second loop: asleep, a prompt arrives, FINAL ANSWER: 3, each stage in turn, a meltdown with FINAL ANSWER: 2, back to sleep.
 
-The background, question, every word of the vocabulary, the stamp and the glow are rendered once and cached; the HUD is only redrawn when its text changes (4 times a second). About 1.2 ms per frame in a full meltdown. 20 fps, 8 when asleep. The strawberry is a PNG in `c/assets/butwait/`, installed next to the binary; its face is drawn in cairo. `TOKENS_PER_WORD`, `WAIT_TOK`, `PANIC_TOK`, `MELT_TOK` and `STAMP_EVERY` are in `c/butwait.c`.
+The background, question, every word of the vocabulary, the stamp and the glow are rendered once and cached; the HUD is only redrawn when its text changes (4 times a second). About 1.2 ms per frame in a full meltdown. 20 fps, 15 when asleep. The strawberry is a PNG in `c/assets/butwait/`, installed next to the binary; its face is drawn in cairo. `TOKENS_PER_WORD`, `WAIT_TOK`, `PANIC_TOK`, `MELT_TOK` and `STAMP_EVERY` are in `c/butwait.c`.
 
 <br clear="right">
 
@@ -366,7 +366,7 @@ A self-playing round brick-breaker. The whole screen is the playfield: a pixel-a
 | Big number on top, 1UP / 2UP at the bottom | total tok/s, then each server's tok/s in its colour |
 | One white ball, INSERT COIN, HI-SCORE | idle attract mode; the HI-SCORE is the tokens generated since the display started |
 
-The playfield, CRT scanlines and cabinet bezel are drawn once and cached, the bricks are re-cached only when one breaks, and the text layer is redrawn only when it changes (numbers update 4x a second). About 0.7 ms per frame; it runs at 20 fps while tokens are flowing and 10 fps in attract mode. `--showcase` runs a scripted 40 s loop through every state. `TOK_PER_BALL`, `MAX_OWN_BALLS`, `FPS_BUSY` and `FPS_IDLE` are in `c/brickout.c`.
+The playfield, CRT scanlines and cabinet bezel are drawn once and cached, the bricks are re-cached only when one breaks, and the text layer is redrawn only when it changes (numbers update 4x a second). About 0.7 ms per frame; it runs at 20 fps while tokens are flowing and 15 fps in attract mode. `--showcase` runs a scripted 40 s loop through every state. `TOK_PER_BALL`, `MAX_OWN_BALLS`, `FPS_BUSY` and `FPS_IDLE` are in `c/brickout.c`.
 
 <br clear="right">
 
@@ -389,7 +389,7 @@ A lantern festival on a mountain lake at night. Every sky lantern is a burst of 
 | The odd stray lantern, "still night" | idle: no tokens and no running requests |
 | Text on the water | total tok/s, then GPU 0 tok/s (blue), total watts, GPU 1 tok/s (orange); GPU temps instead of tok/s when idle |
 
-The lake is a painting made with an image model (via the Codex CLI) in `c/assets/lantern/`. The lanterns live in a small 3D world and are projected with a pinhole camera, so distant ones are smaller, climb slower and sit nearer the far shore, and each is mirrored about its own spot on the water. Lanterns burn out after 11 to 17 seconds. Bodies and glows are pre-rendered at 64 sizes and blitted unscaled, and the text strip is only redrawn when a number changes (4 times a second at most): about 3.3 ms per frame with ~280 lanterns in the air, 0.4 ms idle. 20 fps, 10 when idle. `--showcase` plays a scripted 40 s festival (the GIF is 10 s of it). `TOKENS_PER_LANTERN`, `MAX_RATE`, `FPS_BUSY` and `FPS_IDLE` are in `c/lantern.c`.
+The lake is a painting made with an image model (via the Codex CLI) in `c/assets/lantern/`. The lanterns live in a small 3D world and are projected with a pinhole camera, so distant ones are smaller, climb slower and sit nearer the far shore, and each is mirrored about its own spot on the water. Lanterns burn out after 11 to 17 seconds. Bodies and glows are pre-rendered at 64 sizes and blitted unscaled, and the text strip is only redrawn when a number changes (4 times a second at most): about 3.3 ms per frame with ~280 lanterns in the air, 0.4 ms idle. 20 fps, 15 when idle. `--showcase` plays a scripted 40 s festival (the GIF is 10 s of it). `TOKENS_PER_LANTERN`, `MAX_RATE`, `FPS_BUSY` and `FPS_IDLE` are in `c/lantern.c`.
 
 <br clear="right">
 
@@ -414,7 +414,7 @@ The round screen is a spinning record and the pump cap is a cutting lathe. While
 | Label text | per-server tok/s (blue, orange), total tok/s, RPM |
 | Bottom readout | GPU 0 temp (blue), total watts, GPU 1 temp (orange) |
 
-The groove is cut into a persistent surface a few short strokes per frame, and the whole record is painted rotated each frame. The vinyl's bowtie sheen doesn't turn with the disc, so it's a static overlay computed once, and the text is cached and redrawn only when a number changes (4x a second). About 2.8 ms a frame at 20 fps, including JPEG encoding. It drops to 5 fps once the platter has stopped. The strobe dots on the platter rim stand still at 33⅓ RPM, just like on a real turntable. `PITCH_MIN`, `PITCH_MAX`, `TOK_FULL`, `CH_FULL`, `RPM_UP`/`RPM_DOWN`, `GAP_HOLD` and `TRACK_GAP` are in `c/lathe.c`. `--showcase` runs a scripted 44 s loop: a quiet GPU 0 track, a loud track on both GPUs, GPU 1 alone, then more load until the side fills and the record flips.
+The groove is cut into a persistent surface a few short strokes per frame, and the whole record is painted rotated each frame. The vinyl's bowtie sheen doesn't turn with the disc, so it's a static overlay computed once, and the text is cached and redrawn only when a number changes (4x a second). About 2.8 ms a frame at 20 fps, including JPEG encoding. It drops to 15 fps once the platter has stopped. The strobe dots on the platter rim stand still at 33⅓ RPM, just like on a real turntable. `PITCH_MIN`, `PITCH_MAX`, `TOK_FULL`, `CH_FULL`, `RPM_UP`/`RPM_DOWN`, `GAP_HOLD` and `TRACK_GAP` are in `c/lathe.c`. `--showcase` runs a scripted 44 s loop: a quiet GPU 0 track, a loud track on both GPUs, GPU 1 alone, then more load until the side fills and the record flips.
 
 <br clear="right">
 
@@ -482,7 +482,7 @@ The original: a reactor core.
 | Middle | total watts |
 | Bottom | GPU temps, running requests |
 
-The lightest display (about 2% of a core). 12 fps.
+The lightest display (about 2% of a core). 15 fps.
 
 <br clear="right">
 
@@ -500,6 +500,7 @@ Everything is a constant at the top of each `c/*.c` file:
 | `SLOTS_PER_SERVER` | `4` | plasma | vLLM `--max-num-seqs` per server |
 | `SWEAT_TOK`, `SHADES_TOK`, `HOT_TOK`, `AGI_TOK` | 500, 800, 1200, 2000 | brrr | mood thresholds in tok/s |
 | `MAX_WORDS_PER_S` | `14` | horizon | legible words per second |
+| `GPU_FULL_RATE`, `GPU_IDLE_W`, `GPU_MAX_W` | `900`, `40` W, `575` W | all | [GPU load mode](#gpu-load-mode): tok/s-equivalent of a GPU at 100%, and the power range that counts as 0 to 100% |
 
 ## Command line and environment
 
@@ -509,7 +510,26 @@ Everything is a constant at the top of each `c/*.c` file:
 | `--demo` | all | simulated data cycling from idle to heavy load; no GPUs or vLLM needed |
 | `--showcase` | brrr | scripted 44 s loop of every mood at 30 fps |
 | `--bench` | all | renders a few scenes off screen, prints ms/frame, writes preview PNGs |
+| `--gpu-load` | all | drive the display from GPU load and power instead of vLLM tokens/sec (see [GPU load mode](#gpu-load-mode)) |
 | `LCD_DUMP_DIR=/path` | all | writes every frame to `/path/frame_NNNNN.jpg` instead of the pump; used to make the GIFs above |
+| `LLM_REACTOR_SOURCE=gpu` | all | same as `--gpu-load` |
+
+### GPU load mode
+
+Not running vLLM? With `--gpu-load`, or `LLM_REACTOR_SOURCE=gpu` in the environment, every display is driven by how hard the GPUs are working instead, so it reacts to games, image generation, training or anything else. Each GPU's activity is half its utilisation and half its power draw, scaled between `GPU_IDLE_W` (40 W, idle) and `GPU_MAX_W` (575 W, the card's power limit): utilisation alone can sit at 100% while a card is barely working, the watts show how hard it really is. Below 3% counts as idle.
+
+That activity is fed to the display as if it were tokens/sec: a GPU at 100% counts as `GPU_FULL_RATE` (900) tok/s, and a busy GPU counts as a running request (in `plasma`, 1 to 4 filaments per GPU depending on its activity). All the animations and thresholds work unchanged, and the numbers on screen show activity instead of tok/s: each GPU's % where a display shows per-server numbers, and the average of both for totals, labelled `% GPU`. Counters that add up tokens say what they count instead: `butwait` thinks for *GPU-seconds* and a `kombat` round ends in GPU-seconds too; the water and tears counters (`thirst`, `tears`, `tears2`) keep using their per-token estimate on the token-equivalent rate. Watts and temperatures are shown as usual. `horizon` still shows words only when vLLM is streaming. `GPU_FULL_RATE`, `GPU_IDLE_W` and `GPU_MAX_W` are at the top of each `c/*.c` file; raise `GPU_FULL_RATE` to reach the busiest moods (`brrr`'s AGI and `kombat`'s ULTRA need 2000 tok/s in total, more than two GPUs at 900).
+
+To run the service in GPU mode:
+
+```sh
+sudo systemctl edit llm-reactor
+#   [Service]
+#   Environment=LLM_REACTOR_SOURCE=gpu
+sudo systemctl restart llm-reactor
+```
+
+`--demo` and `--bench` combined with `--gpu-load` still use simulated token data, but label it as GPU %, to preview the layout.
 
 Making a GIF:
 
@@ -525,23 +545,23 @@ Render + JPEG encode per frame under heavy load on a Ryzen 9 9950X3D, from `--be
 
 | Display | Per frame | FPS busy / idle |
 |---|---|---|
-| `autumn` | ~2.5 ms | 20 / 6 |
-| `reactor` | ~1.7 ms | 12 / 6 |
-| `thirst` | ~0.7 ms | 20 / 8 |
-| `tears` | ~2 ms | 20 / 8 |
-| `koi` | ~3 ms | 20 / 10 |
-| `tears2` | ~2 ms | 20 / 8 |
-| `kombat` | ~3.1 ms | 20 / 8 (30 in showcase) |
-| `butwait` | ~1.2 ms | 20 / 8 |
-| `brickout` | ~0.7 ms | 20 / 10 |
-| `lantern` | ~3.3 ms | 20 / 10 |
-| `lathe` | ~2.8 ms | 20 / 5 |
-| `fishbowl` | ~2.1 ms | 24 / 12 |
-| `singularity` | ~2.1 ms | 24 / 8 |
-| `brrr` | ~2.3 ms | 20 / 8 (30 in showcase) |
-| `plasma` | ~3.2 ms | 24 / 8 |
-| `synapse` | ~3.7 ms | 20 / 8 |
-| `horizon` | ~4.4 ms | 20 / 8 |
+| `autumn` | ~2.5 ms | 20 / 15 |
+| `reactor` | ~1.7 ms | 15 / 15 |
+| `thirst` | ~0.7 ms | 20 / 15 |
+| `tears` | ~2 ms | 20 / 15 |
+| `koi` | ~3 ms | 20 / 15 |
+| `tears2` | ~2 ms | 20 / 15 |
+| `kombat` | ~3.1 ms | 20 / 15 (30 in showcase) |
+| `butwait` | ~1.2 ms | 20 / 15 |
+| `brickout` | ~0.7 ms | 20 / 15 |
+| `lantern` | ~3.3 ms | 20 / 15 |
+| `lathe` | ~2.8 ms | 20 / 15 |
+| `fishbowl` | ~2.1 ms | 24 / 15 |
+| `singularity` | ~2.1 ms | 24 / 15 |
+| `brrr` | ~2.3 ms | 20 / 15 (30 in showcase) |
+| `plasma` | ~3.2 ms | 24 / 15 |
+| `synapse` | ~3.7 ms | 20 / 15 |
+| `horizon` | ~4.4 ms | 20 / 15 |
 
 At 20 fps, 2.5 ms per frame is about 5% of one core; `autumn` measured 4.3% live with both servers busy.
 
@@ -551,7 +571,7 @@ How they stay cheap:
 - **Cached text.** All text is drawn into its own layer that is only redrawn when a value changes, and numbers update 4 times a second instead of every frame. Outlined and glowing text was the single biggest cost in `brrr`.
 - **Slow effects at a slower rate.** `fishbowl`'s light rays, caustics and seaweed are refreshed 8 times a second into their own layer.
 - **Glows drawn only where they are.** Radial glows fill their own circle instead of painting the whole frame.
-- **Idle frame rate.** When nothing is generating, displays drop to 6 to 12 fps.
+- **Idle frame rate.** When nothing is generating, displays drop to 15 fps.
 
 Most of what's left is the animation itself: particles, trails, signals and falling words that change every frame. JPEG encoding with libjpeg-turbo is well under a millisecond.
 
@@ -581,6 +601,7 @@ Protocol details come from [OpenLinkHub](https://github.com/jurkovic-nikola/Open
 | GPU load, power, temperature | NVML, by PCI bus ID (1 s average power, same as `nvidia-smi`'s `power.draw`) |
 | Tokens/sec | `vllm:generation_tokens_total` summed over every engine on each server, differenced once a second and lightly smoothed; this covers every running request (all slots) |
 | Running requests | `vllm:num_requests_running` per server |
+| GPU activity (GPU load mode) | NVML utilisation and power, blended 50/50, in place of the two above |
 | Streamed text (`horizon` only) | libpcap on `lo`, responses from the vLLM ports |
 
 Watts are **GPU board power only**; CPU, motherboard and PSU losses are not included, so a wall meter will read higher.
